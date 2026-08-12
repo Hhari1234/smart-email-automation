@@ -4,6 +4,7 @@ Runs the bulk-send loop on a background thread so the Tkinter GUI stays responsi
 Supports pause / resume / stop, per-email retries, randomized delay, duplicate
 skipping via the local database, and live progress callbacks back to the GUI.
 """
+import os
 import random
 import threading
 import time
@@ -15,6 +16,15 @@ from template_engine import render, text_to_html
 from mailer import EmailSender, SendError
 from database import Database
 import excel_io
+
+
+def _get_log_dir() -> Path:
+    if os.environ.get("VERCEL") == "1":
+        base = Path(os.environ.get("TMPDIR", "/tmp"))
+        target = base / "resumemailer_logs"
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+    return Path(__file__).resolve().parent / "logs"
 
 
 class SendWorker(threading.Thread):
@@ -46,8 +56,7 @@ class SendWorker(threading.Thread):
         self.skipped = 0
         self.failed_records = []
 
-        log_dir = Path(__file__).resolve().parent / "logs"
-        log_dir.mkdir(exist_ok=True)
+        log_dir = _get_log_dir()
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_csv = log_dir / f"send_log_{ts}.csv"
         self.failed_xlsx = log_dir / f"failed_{ts}.xlsx"

@@ -2,11 +2,15 @@
 database.py
 SQLite-backed storage that prevents duplicate sends and records full send history.
 """
+import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime
 
-DB_PATH = Path(__file__).resolve().parent / "resumemailer.db"
+if os.environ.get("VERCEL") == "1":
+    DB_PATH = Path(os.environ.get("TMPDIR", "/tmp")) / "resumemailer.db"
+else:
+    DB_PATH = Path(__file__).resolve().parent / "resumemailer.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sent_emails (

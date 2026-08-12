@@ -90,8 +90,11 @@ class GmailAPISender:
                     )
                 flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), GMAIL_SCOPES)
                 creds = flow.run_local_server(port=0)
-            token_path.parent.mkdir(parents=True, exist_ok=True)
-            token_path.write_text(creds.to_json())
+            try:
+                token_path.parent.mkdir(parents=True, exist_ok=True)
+                token_path.write_text(creds.to_json())
+            except OSError:
+                pass
 
         self.service = build("gmail", "v1", credentials=creds)
 

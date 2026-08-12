@@ -45,10 +45,14 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Directories
 # ---------------------------------------------------------------------------
-UPLOADS_DIR = BASE_DIR / "uploads"
-UPLOADS_DIR.mkdir(exist_ok=True)
-LOGS_DIR = BASE_DIR / "logs"
-LOGS_DIR.mkdir(exist_ok=True)
+def _runtime_dir(name: str) -> Path:
+    base = Path(os.environ.get("TMPDIR", "/tmp"))
+    target = base / name
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+UPLOADS_DIR = _runtime_dir("resumemailer_uploads")
+LOGS_DIR = _runtime_dir("resumemailer_logs")
 
 # ---------------------------------------------------------------------------
 # Global state (thread-safe for simple reads; writes happen mainly from
@@ -186,7 +190,8 @@ async def upload_file(file: UploadFile = File(...)):
 @app.get("/api/files/sample")
 async def download_sample():
     out = UPLOADS_DIR / "recipients_sample.xlsx"
-    create_sample_recipients(out)
+    if not out.exists():
+        create_sample_recipients(out)
     return FileResponse(out, filename="recipients_sample.xlsx")
 
 # ---------------------------------------------------------------------------
