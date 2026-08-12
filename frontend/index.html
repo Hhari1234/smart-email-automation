@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ResumeMailer — Premium Job Application Sender</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+  <!-- Animated background -->
+  <div class="bg-aurora">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="grid-overlay"></div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- App shell -->
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+        </div>
+        <span class="brand-text">ResumeMailer</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-view="setup">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          <span>Setup</span>
+        </a>
+        <a href="#" class="nav-item" data-view="recipients">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          <span>Recipients</span>
+        </a>
+        <a href="#" class="nav-item" data-view="template">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14,2 14,8 20,8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10,9 9,9 8,9"/>
+          </svg>
+          <span>Template</span>
+        </a>
+        <a href="#" class="nav-item" data-view="send">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22,2 15,22 11,13 2,9 22,2"/>
+          </svg>
+          <span>Send</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-indicator" id="connection-status">
+          <span class="status-dot"></span>
+          <span class="status-text">Connected</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-content">
+      <!-- Top bar -->
+      <header class="top-bar">
+        <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Toggle menu">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+        <h1 class="page-title" id="page-title">Setup</h1>
+        <div class="top-bar-actions">
+          <span class="badge badge-success" id="api-status">SMTP Ready</span>
+        </div>
+      </header>
+
+      <!-- Views -->
+      <div class="views-container">
+        <!-- Setup View -->
+        <section class="view active" id="view-setup">
+          <div class="view-header">
+            <h2>Your Details & Credentials</h2>
+            <p class="view-subtitle">Configure your profile, attachments, and sending preferences.</p>
+          </div>
+
+          <div class="card-grid">
+            <div class="glass-card span-2">
+              <div class="card-header">
+                <h3>Personal Information</h3>
+              </div>
+              <div class="card-body">
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label class="form-label" for="sender-name">Your Name</label>
+                    <input type="text" id="sender-name" class="form-input" placeholder="John Doe" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="sender-email">Sender Email (Gmail)</label>
+                    <input type="email" id="sender-email" class="form-input" placeholder="you@gmail.com" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="sender-phone">Phone</label>
+                    <input type="tel" id="sender-phone" class="form-input" placeholder="+91 98765 43210" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="sender-linkedin">LinkedIn URL</label>
+                    <input type="url" id="sender-linkedin" class="form-input" placeholder="https://linkedin.com/in/yourprofile" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="glass-card">
+              <div class="card-header">
+                <h3>Attachments</h3>
+              </div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label class="form-label">Resume (PDF / DOCX)</label>
+                  <div class="file-input-wrapper">
+                    <input type="file" id="resume-upload" class="file-input" accept=".pdf,.docx" />
+                    <label for="resume-upload" class="file-label">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17,8 12,3 7,8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                      </svg>
+                      <span id="resume-label">Choose file...</span>
+                    </label>
+                  </div>
+                  <input type="hidden" id="resume-path" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Extra Attachments (optional)</label>
+                  <div class="file-input-wrapper">
+                    <input type="file" id="extra-upload" class="file-input" multiple accept="*/*" />
+                    <label for="extra-upload" class="file-label">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17,8 12,3 7,8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                      </svg>
+                      <span id="extra-label">Add files...</span>
+                    </label>
+                  </div>
+                  <div id="extra-files-list" class="file-list"></div>
+                  <input type="hidden" id="extra-paths" />
+                </div>
+              </div>
+            </div>
+
+            <div class="glass-card span-2">
+              <div class="card-header">
+                <h3>Sending Behavior</h3>
+              </div>
+              <div class="card-body">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label" for="delay-min">Min Delay (seconds)</label>
+                    <input type="number" id="delay-min" class="form-input" value="5" min="1" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="delay-max">Max Delay (seconds)</label>
+                    <input type="number" id="delay-max" class="form-input" value="15" min="1" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="max-retries">Max Retries</label>
+                    <input type="number" id="max-retries" class="form-input" value="3" min="0" max="10" />
+                  </div>
+                </div>
+                <div class="form-group" style="margin-top: 16px;">
+                  <label class="toggle-label">
+                    <input type="checkbox" id="use-gmail-api" checked />
+                    <span class="toggle-slider"></span>
+                    <span class="toggle-text">Prefer Gmail API (falls back to SMTP automatically)</span>
+                  </label>
+                  <p class="form-hint">SMTP credentials are read from the .env file (SMTP_EMAIL, SMTP_APP_PASSWORD).</p>
+                </div>
+                <div class="form-actions">
+                  <button class="btn btn-primary" id="save-settings-btn">
+                    <span class="btn-text">Save Settings</span>
+                    <span class="btn-loader" style="display:none;"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Recipients View -->
+        <section class="view" id="view-recipients">
+          <div class="view-header">
+            <h2>Recipients</h2>
+            <p class="view-subtitle">Import your recipient list from Excel or CSV.</p>
+          </div>
+
+          <div class="glass-card">
+            <div class="card-header">
+              <h3>Import Recipients</h3>
+            </div>
+            <div class="card-body">
+              <div class="upload-zone" id="upload-zone">
+                <div class="upload-icon">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17,8 12,3 7,8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                </div>
+                <p class="upload-text">Drag & Drop Excel / CSV here</p>
+                <p class="upload-hint">or click to browse files</p>
+                <input type="file" id="recipients-upload" class="file-input" accept=".xlsx,.xls,.csv" />
+                <div class="upload-actions">
+                  <button class="btn btn-secondary" id="browse-recipients-btn">Browse Files</button>
+                  <button class="btn btn-ghost" id="download-sample-btn">Download Sample Template</button>
+                </div>
+              </div>
+
+              <div class="recipients-summary" id="recipients-summary" style="display:none;">
+                <div class="summary-stat">
+                  <span class="summary-value" id="total-recipients">0</span>
+                  <span class="summary-label">Total</span>
+                </div>
+                <div class="summary-stat">
+                  <span class="summary-value text-success" id="valid-recipients">0</span>
+                  <span class="summary-label">Valid Emails</span>
+                </div>
+                <div class="summary-stat">
+                  <span class="summary-value text-danger" id="invalid-recipients">0</span>
+                  <span class="summary-label">Invalid</span>
+                </div>
+              </div>
+
+              <div class="table-container" id="recipients-table-container" style="display:none;">
+                <div class="table-toolbar">
+                  <div class="search-box">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input type="text" id="recipients-search" class="search-input" placeholder="Search recipients..." />
+                  </div>
+                  <div class="table-actions">
+                    <button class="btn btn-ghost btn-sm" id="clear-recipients-btn">Clear All</button>
+                  </div>
+                </div>
+                <div class="table-wrapper">
+                  <table class="premium-table" id="recipients-table">
+                    <thead>
+                      <tr>
+                        <th>HR Name</th>
+                        <th>Company</th>
+                        <th>Email</th>
+                        <th>Job Role</th>
+                        <th>Location</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="recipients-tbody">
+                      <tr class="empty-row">
+                        <td colspan="6">
+                          <div class="empty-state">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                              <circle cx="9" cy="7" r="4"/>
+                              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
+                            <p>No recipients yet</p>
+                            <p class="empty-hint">Import an Excel or CSV file to get started.</p>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Template View -->
+        <section class="view" id="view-template">
+          <div class="view-header">
+            <h2>Email Template</h2>
+            <p class="view-subtitle">Compose your personalized email with placeholders.</p>
+          </div>
+
+          <div class="card-grid">
+            <div class="glass-card">
+              <div class="card-header">
+                <h3>Subject Line</h3>
+              </div>
+              <div class="card-body">
+                <div class="form-group">
+                  <input type="text" id="email-subject" class="form-input" placeholder="Application for {{job_role}} at {{company}}" />
+                </div>
+              </div>
+            </div>
+
+            <div class="glass-card span-2">
+              <div class="card-header">
+                <h3>Email Body</h3>
+                <div class="placeholder-chips" id="placeholder-chips">
+                  <!-- Populated by JS -->
+                </div>
+              </div>
+              <div class="card-body">
+                <textarea id="email-body" class="form-textarea" rows="10" placeholder="Write your email body here..."></textarea>
+              </div>
+            </div>
+
+            <div class="glass-card span-2">
+              <div class="card-header">
+                <h3>HTML Signature</h3>
+              </div>
+              <div class="card-body">
+                <textarea id="email-signature" class="form-textarea" rows="4" placeholder="<br><br>Best regards,<br><b>Your Name</b>"></textarea>
+              </div>
+            </div>
+
+            <div class="glass-card span-2">
+              <div class="card-header">
+                <h3>Preview</h3>
+              </div>
+              <div class="card-body">
+                <div class="preview-toolbar">
+                  <button class="btn btn-secondary btn-sm" id="preview-desktop-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                      <line x1="8" y1="21" x2="16" y2="21"/>
+                      <line x1="12" y1="17" x2="12" y2="21"/>
+                    </svg>
+                    Desktop
+                  </button>
+                  <button class="btn btn-ghost btn-sm" id="preview-mobile-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                      <line x1="12" y1="18" x2="12.01" y2="18"/>
+                    </svg>
+                    Mobile
+                  </button>
+                </div>
+                <div class="preview-frame" id="preview-frame">
+                  <div class="preview-email" id="preview-email">
+                    <div class="preview-placeholder">
+                      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                        <polyline points="22,6 12,13 2,6"/>
+                      </svg>
+                      <p>Enter a subject and body, then click Preview.</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="preview-actions">
+                  <button class="btn btn-secondary" id="preview-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    Preview Email
+                  </button>
+                  <button class="btn btn-primary" id="send-test-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="22" y1="2" x2="11" y2="13"/>
+                      <polygon points="22,2 15,22 11,13 2,9 22,2"/>
+                    </svg>
+                    Send Test Email
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Send View -->
+        <section class="view" id="view-send">
+          <div class="view-header">
+            <h2>Send Campaign</h2>
+            <p class="view-subtitle">Start, monitor, and control your email campaign.</p>
+          </div>
+
+          <div class="stats-grid" id="stats-grid">
+            <div class="stat-card glass-card">
+              <div class="stat-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20,6 9,17 4,12"/>
+                </svg>
+              </div>
+              <div class="stat-content">
+                <span class="stat-value text-success" id="stat-sent">0</span>
+                <span class="stat-label">Sent</span>
+              </div>
+            </div>
+            <div class="stat-card glass-card">
+              <div class="stat-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="15" y1="9" x2="9" y2="15"/>
+                  <line x1="9" y1="9" x2="15" y2="15"/>
+                </svg>
+              </div>
+              <div class="stat-content">
+                <span class="stat-value text-danger" id="stat-failed">0</span>
+                <span class="stat-label">Failed</span>
+              </div>
+            </div>
+            <div class="stat-card glass-card">
+              <div class="stat-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="8" x2="12" y2="12"/>
+                  <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+              </div>
+              <div class="stat-content">
+                <span class="stat-value text-warning" id="stat-skipped">0</span>
+                <span class="stat-label">Skipped</span>
+              </div>
+            </div>
+            <div class="stat-card glass-card">
+              <div class="stat-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12,6 12,12 16,14"/>
+                </svg>
+              </div>
+              <div class="stat-content">
+                <span class="stat-value" id="stat-remaining">0</span>
+                <span class="stat-label">Remaining</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card" style="margin-top: 20px;">
+            <div class="card-header">
+              <h3>Campaign Progress</h3>
+              <span class="badge" id="send-status-badge">Idle</span>
+            </div>
+            <div class="card-body">
+              <div class="progress-container">
+                <div class="progress-bar" id="progress-bar">
+                  <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div class="progress-text" id="progress-text">0%</div>
+              </div>
+
+              <div class="send-controls">
+                <button class="btn btn-primary btn-lg" id="start-send-btn">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="5,3 19,12 5,21 5,3"/>
+                  </svg>
+                  Start Sending
+                </button>
+                <button class="btn btn-secondary btn-lg" id="pause-send-btn" disabled>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="6" y="4" width="4" height="16"/>
+                    <rect x="14" y="4" width="4" height="16"/>
+                  </svg>
+                  Pause
+                </button>
+                <button class="btn btn-secondary btn-lg" id="resume-send-btn" disabled>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="5,3 19,12 5,21 5,3"/>
+                  </svg>
+                  Resume
+                </button>
+                <button class="btn btn-danger btn-lg" id="stop-send-btn" disabled>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  </svg>
+                  Stop
+                </button>
+              </div>
+
+              <div class="log-container">
+                <div class="log-header">
+                  <h4>Live Log</h4>
+                  <button class="btn btn-ghost btn-sm" id="clear-log-btn">Clear</button>
+                </div>
+                <div class="log-box" id="log-box">
+                  <div class="log-empty">Waiting to start...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

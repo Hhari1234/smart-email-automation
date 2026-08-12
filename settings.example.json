@@ -1,0 +1,20 @@
+{
+  "sender_name": "Your Name",
+  "sender_email": "your.email@gmail.com",
+  "sender_phone": "+91 98765 43210",
+  "sender_linkedin": "https://linkedin.com/in/yourprofile",
+  "use_gmail_api": true,
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "delay_min_seconds": 5,
+  "delay_max_seconds": 15,
+  "max_retries": 3,
+  "resume_path": "",
+  "extra_attachments": [],
+  "template_path": "sample_data/email_template.txt",
+  "subject": "Application for {{job_role}} at {{company}}",
+  "signature": "<br><br>Best regards,<br><b>{{your_name}}</b><br>{{your_phone}} | {{your_email}}<br>{{your_linkedin}}",
+  "signature_html": "<br><br>Best regards,<br><b>{{your_name}}</b><br>{{your_phone}} | {{your_email}<br>{{your_linkedin}}",
+  "recipients_path": "",
+  "last_column_map": {}
+}

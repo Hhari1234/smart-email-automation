@@ -1,0 +1,7 @@
+Dear {{hr_name}},
+
+I hope you're doing well. I'm reaching out to apply for the {{job_role}} position at {{company}}.
+
+I've attached my resume for your review and would be grateful for the opportunity to discuss how I could contribute to your team.
+
+Thank you for your time and consideration.
