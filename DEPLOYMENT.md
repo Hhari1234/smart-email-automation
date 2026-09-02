@@ -1,75 +1,205 @@
-# Deployment Checklist
+# Deployment
 
-This is a step-by-step checklist for deploying ResumeMailer to a remote
-hosting platform (Render, Railway, Fly.io, a VPS with a reverse proxy,
-etc.). HTTPS is assumed to be terminated by the platform or reverse
-proxy — do **not** run your own TLS server.
+ResumeMailer is a **Python FastAPI + Uvicorn** web application — it is **not**
+a static site. The backend serves the frontend AND runs the email-sending
+logic, so the deployment target must run a long-lived Python process with
+HTTPS, environment variables, and persistent storage.
 
-## Before you deploy
+## Architecture
 
-1. **Pick a platform** that gives you a public HTTPS URL and a way to
-   set environment variables (and ideally a persistent disk for the
-   SQLite database and uploaded files).
-2. **Push your code** to a Git repository (GitHub, GitLab, etc.).
-3. **Create an `.env` locally** (do not commit it) with:
-   - `APP_ENV=production`
-   - `APP_USERNAME=your-username`
-   - `APP_PASSWORD_HASH=<bcrypt hash, see README>`
-   - `APP_SECRET_KEY=<64+ random chars>`
-   - `SMTP_EMAIL` and `SMTP_APP_PASSWORD` (or Gmail API credentials)
-4. **Generate the password hash** locally:
-   ```bash
-   python -c "from auth import hash_password; print(hash_password('YOUR_PASSWORD'))"
-   ```
+```
+HTTPS URL (platform TLS)
+        ↓
+uvicorn server:app --host 0.0.0.0 --port $PORT
+  ├── FastAPI app (server.py)
+  ├── SQLite database (duplicate prevention + history + templates/drafts/campaigns)
+  ├── In-memory SendWorker (single process)
+  └── Static frontend (index.html, login.html, /static/*)
+```
 
-## Deploy steps
+## Requirements
 
-1. [ ] Create a hosting account (Render, Railway, Fly.io, etc.).
-2. [ ] Connect your GitHub repository.
-3. [ ] Configure environment variables on the platform:
-   - `APP_ENV=production`
-   - `APP_USERNAME`
-   - `APP_PASSWORD_HASH`
-   - `APP_SECRET_KEY`
-   - `SMTP_EMAIL` (if using SMTP fallback)
-   - `SMTP_APP_PASSWORD` (if using SMTP fallback)
-   - `GMAIL_CREDENTIALS_FILE` (only if using Gmail API; the value is a
-     path inside the container — you will need to mount the file
-     separately because it is not in the repo)
-   - `GMAIL_TOKEN_FILE` (same as above)
-4. [ ] Configure the Gmail OAuth redirect URI on Google Cloud Console
-   to match the platform's domain (only required if you are actually
-   using the Gmail API; not needed for the SMTP fallback).
-5. [ ] Configure SMTP if used (App Password, not your real Gmail
-   password).
-6. [ ] Deploy.
-7. [ ] Open the HTTPS URL — you should land on `/login`.
-8. [ ] Log in with `APP_USERNAME` and the password whose hash you put
-   in `APP_PASSWORD_HASH`.
-9. [ ] Test `GET /health` — it should return `{"status":"ok"}`.
-10. [ ] Send a test email to yourself.
-11. [ ] Test a small campaign (5–10 recipients).
-12. [ ] Verify history (`/api/send/history` or the History modal).
-13. [ ] Verify pause / resume / stop.
-14. [ ] Verify attachments (resume + extra files).
-15. [ ] Verify duplicate prevention (re-run the same small campaign —
-    no second emails should be sent).
+- Python 3.10+
+- A hosting platform that supports Python, FastAPI/Uvicorn, HTTPS,
+  environment variables, and long-running web processes (Render, Railway,
+  Fly.io, or a VPS with a reverse proxy).
+- A persistent volume for the SQLite database, uploads, and logs
+  (see "Persistent Storage" below).
 
-## Production notes
+## Environment Variables
 
-- The app binds to `0.0.0.0:${PORT}` when started with the included
-  `Procfile`. Most platforms inject `PORT` automatically; if yours
-  doesn't, set it explicitly.
-- `APP_ENV=production` disables uvicorn's auto-reload, requires
-  `APP_USERNAME`/`APP_PASSWORD_HASH`/`APP_SECRET_KEY` to be set,
-  and marks the session cookie as `Secure` (so it only travels over
-  HTTPS).
-- The SQLite database lives at the project root by default. On
-  platforms with ephemeral filesystems you must mount a persistent
-  volume at the project root or override the database path.
-- Never commit `credentials/credentials.json`, `credentials/token.json`,
-  or your `.env` file. They are listed in `.gitignore` for that
-  reason.
-- HTTPS must be terminated by the platform or a reverse proxy. The
-  app sets `Strict-Transport-Security` in production but does not
-  speak TLS itself.
+Set these on the hosting platform's secret/environment-variable system.
+**Never commit them to Git.**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `APP_ENV` | yes | Set to `production` for any public deployment. |
+| `APP_USERNAME` | yes (production) | Login username. |
+| `APP_PASSWORD_HASH` | yes (production) | bcrypt hash of the password. |
+| `APP_SECRET_KEY` | yes (production) | Long random string used to sign session cookies. |
+| `APP_SESSION_HOURS` | no | Session lifetime in hours (default 12). |
+| `CORS_ALLOW_ORIGINS` | no | Comma-separated extra CORS origins. Leave empty for same-origin. |
+| `SMTP_EMAIL` | no | Sender email for SMTP fallback. |
+| `SMTP_APP_PASSWORD` | no | SMTP app password for the fallback. |
+| `GMAIL_CREDENTIALS_FILE` | no | Path to OAuth credentials JSON. |
+| `GMAIL_TOKEN_FILE` | no | Path to cached OAuth token JSON. |
+
+Generate the password hash locally:
+```bash
+python -c "from auth import hash_password; print(hash_password('YOUR_PASSWORD'))"
+```
+
+Generate the secret key locally:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+## Deployment Steps
+
+### Render
+
+1. Create a Render account and connect your GitHub repository.
+2. Create a **Web Service** (Python 3) from
+   `https://github.com/Hhari1234/smart-email-automation`.
+3. Set **Build Command**: `pip install -r requirements.txt`
+4. Set **Start Command**:
+   `APP_ENV=production uvicorn server:app --host 0.0.0.0 --port $PORT`
+5. Add the required environment variables.
+6. Add a persistent **disk** (e.g. 1 GB) mounted at the project root.
+7. Set **Health Check Path**: `/health`
+8. Deploy.
+
+The included `render.yaml` captures this configuration.
+
+### Railway
+
+1. Create a Railway project and connect the GitHub repository.
+2. Railway auto-detects Python and uses `railway.toml` for configuration.
+3. Set the required environment variables.
+4. Add a persistent **volume** for the project root.
+5. Run `railway up` or push to trigger a deploy.
+
+### Fly.io
+
+Create a `Dockerfile`:
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+Then `fly launch`, set the environment variables, and `fly deploy`.
+
+### VPS / Reverse Proxy
+
+```bash
+pip install -r requirements.txt
+APP_ENV=production uvicorn server:app --host 127.0.0.1 --port 8000
+```
+
+Configure your reverse proxy (nginx, Caddy, etc.) to terminate TLS and
+proxy to `http://127.0.0.1:8000`.
+
+## Gmail Configuration
+
+The Gmail API code path is implemented and will be used when
+`credentials/credentials.json` is present. To use it:
+
+1. Go to https://console.cloud.google.com/ → create a project.
+2. Enable the **Gmail API**.
+3. Create OAuth **Client ID** credentials → Application type: **Desktop App**.
+4. Download the JSON and save it as `credentials/credentials.json`.
+5. On first send, a browser window opens for you to grant access; the
+   resulting token is cached in `credentials/token.json`.
+
+**Important:** The OAuth flow uses `flow.run_local_server(port=0)`, which
+opens a browser on the machine running the app. On a remote server this
+cannot work interactively — use the **SMTP fallback** instead, or run the
+OAuth flow locally first so a `token.json` is cached, then deploy the
+cached token.
+
+If Gmail API is not configured, the app automatically falls back to SMTP
+using `SMTP_EMAIL` / `SMTP_APP_PASSWORD`.
+
+## SMTP Configuration
+
+1. Enable 2-Step Verification on your Google account.
+2. Create an App Password at https://myaccount.google.com/apppasswords.
+3. Set `SMTP_EMAIL` to your Gmail address and `SMTP_APP_PASSWORD` to the
+   16-character app password in the hosting platform's environment.
+
+## Persistent Storage
+
+The SQLite database (`resumemailer.db`), uploaded attachments, and send
+logs live in the working directory. On platforms with ephemeral filesystems
+you **must** mount a persistent volume at the project root or override the
+database path via environment. Without persistence:
+
+- A process restart clears send history and duplicate-prevention state.
+- Uploaded attachments are lost.
+
+## Worker Limitations
+
+The `SendWorker` runs on a single background thread inside a single
+process. Do **not** configure multiple application workers
+(`--workers > 1`) unless you change the architecture to support it.
+
+A process restart terminates any in-memory campaign; there is no
+automatic restart-resume across deploys.
+
+## Security
+
+- Single-user login (username + bcrypt password) with a server-side signed
+  session cookie (HttpOnly, SameSite=Lax, Secure in production) and a
+  configurable session lifetime.
+- CSRF token required on every state-changing API request.
+- Login rate limiting: 5 failures per IP per 10 minutes and 8 failures per
+  username per 15 minutes, with `429` responses.
+- Same-origin deployment by default. CORS is disabled unless
+  `CORS_ALLOW_ORIGINS` is set, and is never combined with
+  `allow_origins=["*"]`.
+- Security headers: `X-Content-Type-Options`, `Referrer-Policy`,
+  `X-Frame-Options`, a strict `Content-Security-Policy` on HTML responses,
+  and `Strict-Transport-Security` in production.
+- File uploads are limited to 25 MB, validated against a per-kind extension
+  allowlist, written to a generated server-side filename, validated to stay
+  inside the uploads directory, and cleaned up on failure.
+- The SQLite database, OAuth token file, and `.env` are never served as
+  static files.
+- Python tracebacks are never returned to the user; they are logged
+  server-side.
+- Production refuses to start unless `APP_USERNAME`, `APP_PASSWORD_HASH`,
+  and `APP_SECRET_KEY` are set.
+
+## Testing
+
+After deployment:
+
+1. Open the HTTPS URL — you should land on `/login`.
+2. Log in with `APP_USERNAME` and the password whose hash you configured.
+3. Test `GET /health` — it should return `{"status":"ok"}`.
+4. Test the dashboard loads.
+5. Paste recipients, parse, merge.
+6. Preview the email.
+7. Send a test email to a configured test address.
+8. Verify history.
+9. Verify logout.
+
+## Troubleshooting
+
+- **"Refusing to start: APP_USERNAME, APP_PASSWORD_HASH and APP_SECRET_KEY
+  must be set when APP_ENV=production"** → set those three values on the
+  platform's environment.
+- **"Authentication required"** on every request → log in at `/login`.
+- **"CSRF token missing or invalid"** → your session was lost (cookie
+  expired). Refresh and log in again.
+- **"SMTP_EMAIL / SMTP_APP_PASSWORD not set"** → configure SMTP on the
+  platform's environment.
+- **"Gmail API credentials.json not found"** → either add the file or
+  ensure SMTP is configured.
+- **`ModuleNotFoundError`** → the platform did not install dependencies;
+  check the build command.

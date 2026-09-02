@@ -269,6 +269,93 @@ What the deployment is hardened with:
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the step-by-step remote
 deployment checklist.
 
+## Production Deployment
+
+This application is a **Python FastAPI + Uvicorn backend**, not a static
+site. The backend serves the frontend AND runs the email-sending logic,
+so the deployment target must run a long-lived Python process with
+HTTPS, environment variables, and persistent storage.
+
+### Architecture
+
+```
+HTTPS URL (platform TLS)
+        ↓
+uvicorn server:app --host 0.0.0.0 --port $PORT
+  ├── FastAPI app (server.py)
+  ├── SQLite database (duplicate prevention + history + templates/drafts/campaigns)
+  ├── In-memory SendWorker (single process)
+  └── Static frontend (index.html, login.html, /static/*)
+```
+
+### Hosting Platforms
+
+Any platform that supports **Python, FastAPI/Uvicorn, HTTPS, environment
+variables, and long-running web processes** works:
+
+| Platform | Build Command | Start Command |
+|----------|---------------|---------------|
+| Render | `pip install -r requirements.txt` | `APP_ENV=production uvicorn server:app --host 0.0.0.0 --port $PORT` |
+| Railway | auto-detected | `uvicorn server:app --host 0.0.0.0 --port $PORT` (see `railway.toml`) |
+| Fly.io | via Dockerfile | `uvicorn server:app --host 0.0.0.0 --port $PORT` |
+| VPS / reverse proxy | `pip install -r requirements.txt` | `APP_ENV=production uvicorn server:app --host 0.0.0.0 --port $PORT` |
+
+See `Procfile`, `render.yaml`, and `railway.toml` for ready-to-use
+configurations.
+
+### Required Environment Variables
+
+Set these on the hosting platform's secret/environment-variable system
+(never commit them to Git):
+
+```env
+# --- Authentication (required for production) ---
+APP_ENV=production
+APP_USERNAME=your-username
+APP_PASSWORD_HASH=<bcrypt hash of your password>
+APP_SECRET_KEY=<64+ random chars>
+
+# --- SMTP fallback (used automatically if Gmail API isn't set up) ---
+SMTP_EMAIL=your.email@gmail.com
+SMTP_APP_PASSWORD=your-16-char-app-password
+
+# --- Gmail API (preferred, optional) ---
+GMAIL_CREDENTIALS_FILE=credentials/credentials.json
+GMAIL_TOKEN_FILE=credentials/token.json
+```
+
+Generate the password hash locally:
+```bash
+python -c "from auth import hash_password; print(hash_password('YOUR_PASSWORD'))"
+```
+
+Generate the secret key locally:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+### Persistent Storage
+
+The SQLite database (`resumemailer.db`), uploaded attachments, and send
+logs live in the working directory. On platforms with ephemeral filesystems
+you **must** mount a persistent volume at the project root or override the
+database path via environment. Without persistence, a process restart
+clears send history and duplicate-prevention state.
+
+### Worker Limitations
+
+The `SendWorker` runs on a single background thread inside a single
+process. Do **not** configure multiple application workers
+(`--workers > 1`) unless you change the architecture to support it.
+A process restart terminates any in-memory campaign; there is no
+automatic restart-resume across deploys.
+
+### HTTPS
+
+HTTPS must be terminated by the platform or a reverse proxy. The app
+sets `Strict-Transport-Security` in production but does not speak TLS
+itself.
+
 ### Gmail API status
 
 The Gmail API code path is implemented and will be used when
