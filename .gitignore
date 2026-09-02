@@ -41,6 +41,16 @@ logs/
 # Uploads
 uploads/
 
+# OAuth / credential caches
+tokens/
+credentials/
+
+# Runtime artifacts
+*.pid
+*.sock
+.cache/
+
+
 # Sample data is part of the repo assets
 # sample_data/
 

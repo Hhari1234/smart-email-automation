@@ -1,0 +1,21 @@
+# ResumeMailer — Smart Email Automation
+#
+# This is a Python FastAPI + Uvicorn web application. It is NOT a static site.
+# The backend serves the frontend AND runs the email-sending logic.
+#
+# Build command (Python):
+#   pip install -r requirements.txt
+#
+# Start command (production):
+#   web: APP_ENV=production uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}
+#
+# The Procfile above is the canonical start command. Do NOT use --reload
+# in production and do NOT use --workers > 1 unless you have changed the
+# architecture to support multiple processes (the in-memory SendWorker is
+# single-process by design).
+
+build:
+  - pip install -r requirements.txt
+
+run:
+  - uvicorn server:app --host 0.0.0.0 --port $PORT

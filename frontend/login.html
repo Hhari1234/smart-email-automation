@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In — ResumeMailer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/login.css" />
+</head>
+<body>
+  <div class="bg-aurora">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="grid-overlay"></div>
+  </div>
+
+  <main class="login-shell">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+        </div>
+        <span>Smart Email Automation</span>
+      </div>
+
+      <h1 class="login-title">Welcome back</h1>
+      <p class="login-subtitle">Sign in to access your dashboard.</p>
+
+      <form id="login-form" class="login-form" autocomplete="on" novalidate>
+        <div class="form-group">
+          <label class="form-label" for="username">Username</label>
+          <input type="text" id="username" name="username" class="form-input"
+                 autocomplete="username" autocapitalize="none" spellcheck="false" required />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="password">Password</label>
+          <input type="password" id="password" name="password" class="form-input"
+                 autocomplete="current-password" required />
+        </div>
+
+        <div class="form-error" id="form-error" hidden></div>
+
+        <button type="submit" class="btn btn-primary btn-lg" id="login-btn">
+          <span class="btn-text">Sign In</span>
+          <span class="btn-loader" hidden></span>
+        </button>
+      </form>
+
+      <p class="login-footer">Protected area. Authorized access only.</p>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      const form = document.getElementById('login-form');
+      const errEl = document.getElementById('form-error');
+      const btn = document.getElementById('login-btn');
+      const btnText = btn.querySelector('.btn-text');
+      const btnLoader = btn.querySelector('.btn-loader');
+
+      function showError(msg) {
+        errEl.textContent = msg;
+        errEl.hidden = !msg;
+      }
+
+      // If already authenticated, skip the login screen.
+      fetch('/api/auth/status', { credentials: 'same-origin' })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data && data.authenticated) {
+            window.location.replace('/');
+          }
+        })
+        .catch(() => { /* ignore */ });
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        showError('');
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        if (!username || !password) {
+          showError('Please enter both username and password.');
+          return;
+        }
+        btn.disabled = true;
+        btnText.hidden = true;
+        btnLoader.hidden = false;
+        try {
+          const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+          if (res.ok) {
+            window.location.replace('/');
+            return;
+          }
+          const data = await res.json().catch(() => ({}));
+          showError(data.detail || 'Sign in failed. Please try again.');
+        } catch (err) {
+          showError('Network error. Please try again.');
+        } finally {
+          btn.disabled = false;
+          btnText.hidden = false;
+          btnLoader.hidden = true;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

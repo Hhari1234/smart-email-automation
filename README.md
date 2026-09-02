@@ -4,11 +4,18 @@ A premium web application for sending personalized job-application emails in bul
 
 ## Features
 
+### Core Workflow
 - Modern 4-tab workflow: **Setup → Recipients → Template → Send**
 - Import recipients from Excel/CSV (`HR Name, Company, Email, Job Role, Location`)
+- **Paste Email Addresses** — paste a list of emails directly (newline, comma, or semicolon separated)
+- Supports `Name <email@example.com>` format in pasted lists
+- Smart parsing shows **valid**, **duplicate**, and **invalid** counts before merging
 - `{{placeholder}}` templating for subject, body, and HTML signature
+- **Fallback values**: use `{{name|there}}` to show a default when a field is missing
 - Live email preview with desktop/mobile modes
 - Send test email before running a real campaign
+
+### Sending & Safety
 - **Gmail API** (OAuth2) preferred, automatic **SMTP** fallback (App Password)
 - Email address validation before sending
 - **Duplicate prevention** via a local SQLite database — an address that already succeeded won't be emailed again, even across app restarts
@@ -16,15 +23,22 @@ A premium web application for sending personalized job-application emails in bul
 - **Pause / Resume / Stop** at any time, mid-run
 - Up to 3 **automatic retries** per failed email
 - Live progress bar + Sent/Failed/Skipped/Remaining counters
+- **Pre-send confirmation screen** with campaign summary before starting
 - Every send is logged to a timestamped CSV; failed emails are exported to `.xlsx`; a plain-text summary report is written at the end of each run
 - Multiple attachments (resume + extra files) and custom HTML signature
 - Premium dark-mode UI with glassmorphism, animated gradients, and smooth micro-interactions
+
+### Templates & Drafts
+- **Template Library** — save, load, duplicate, and delete reusable email templates
+- **Drafts** — save partial campaigns and resume them later
+- **Campaign History** — view past campaigns with status and recipient details
+- Export campaign recipients to CSV
 
 ## Technology Stack
 
 - **Backend**: Python, FastAPI, Uvicorn
 - **Frontend**: Vanilla HTML/CSS/JavaScript, Inter font
-- **Database**: SQLite (duplicate prevention + send history)
+- **Database**: SQLite (duplicate prevention + send history + templates + drafts + campaigns)
 - **Email**: Gmail API (OAuth2) / SMTP with App Password
 - **Data I/O**: pandas, openpyxl
 
@@ -33,22 +47,28 @@ A premium web application for sending personalized job-application emails in bul
 ```
 ResumeMailer/
 ├── server.py                 # FastAPI backend entry point
+├── auth.py                   # Single-user login, sessions, CSRF, rate limit
 ├── app.py                    # Tkinter desktop app entry point (legacy)
 ├── gui.py                    # Original Tkinter GUI
 ├── mailer.py                 # Gmail API + SMTP sending backends
 ├── sender_worker.py          # Background thread: retries, delay, pause/stop
-├── database.py               # SQLite duplicate-prevention + history
-├── template_engine.py        # {{placeholder}} rendering
+├── database.py               # SQLite duplicate-prevention + history + templates + drafts + campaigns
+├── template_engine.py        # {{placeholder}} rendering with fallback support
 ├── excel_io.py               # Recipient import + log/report export
+├── recipient_parser.py       # Smart bulk email parser for pasted text
 ├── validators.py             # Email validation
 ├── config.py                 # .env + settings.json handling
 ├── requirements.txt
+├── Procfile                  # Production start command
 ├── .env.example
 ├── settings.example.json
 ├── README.md
+├── DEPLOYMENT.md
 ├── frontend/
 │   ├── index.html            # Premium SPA shell
+│   ├── login.html            # Sign-in page
 │   ├── css/styles.css        # Design system + animations
+│   ├── css/login.css         # Login page styles
 │   └── js/app.js             # Frontend application logic
 ├── sample_data/
 │   ├── recipients_sample.xlsx
@@ -77,9 +97,19 @@ Copy `.env.example` to `.env` and fill in your credentials:
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env`. The most important variables:
 
 ```env
+# Set to "production" for any public deployment.
+APP_ENV=development
+
+# Long random string used to sign session cookies.
+APP_SECRET_KEY=
+
+# Login username and bcrypt password hash (see "Authentication" below).
+APP_USERNAME=
+APP_PASSWORD_HASH=
+
 # SMTP fallback (used automatically if Gmail API isn't set up)
 # Enable 2-Step Verification on your Google account, then create an App Password:
 # https://myaccount.google.com/apppasswords
@@ -92,6 +122,34 @@ SMTP_APP_PASSWORD=your-16-char-app-password
 GMAIL_CREDENTIALS_FILE=credentials/credentials.json
 GMAIL_TOKEN_FILE=credentials/token.json
 ```
+
+### 2. Authentication (single-user login)
+
+The web UI is protected by a username + password login. When `APP_USERNAME`,
+`APP_PASSWORD_HASH` and `APP_SECRET_KEY` are all set in `.env`, every sensitive
+API endpoint requires an authenticated session. When none of those are set,
+the app runs with auth disabled (the original local workflow is unchanged).
+
+**Never put a plaintext password in source code or in `.env`.** Generate a
+bcrypt hash and put the hash in `.env` instead.
+
+From the project root:
+
+```bash
+python -c "from auth import hash_password; print(hash_password('YOUR_PASSWORD'))"
+```
+
+Copy the printed hash into `APP_PASSWORD_HASH` in `.env`. Then set
+`APP_USERNAME` and `APP_SECRET_KEY` (generate the secret with
+`python -c "import secrets; print(secrets.token_urlsafe(48))"`).
+
+Once configured, the only public endpoints are `/login`, `/health`,
+`/api/health`, `/api/auth/*`, and the static frontend assets. Every
+sensitive endpoint returns `401` for unauthenticated requests and
+`403` if the CSRF token is missing on state-changing requests.
+
+To run the web app **without** authentication (legacy local mode), simply
+leave the three auth variables empty.
 
 ### 2. Local Settings
 
@@ -134,11 +192,42 @@ python app.py
 ## Using the App
 
 1. **Setup tab** — enter your name/email/phone/LinkedIn, upload your resume, optionally add extra attachments, set delay/retry behavior, click **Save Settings**.
-2. **Recipients tab** — click **Import File...** and choose your Excel/CSV, or **Download Sample Template** to see the expected format.
-3. **Template tab** — write your email using the `{{placeholder}}` chips, click **Preview Email**, then **Send Test Email to Myself** to confirm it looks right.
-4. **Send tab** — click **Start Sending**. Use **Pause/Resume/Stop** anytime.
+2. **Recipients tab** — either:
+   - Click **Browse Files** to import an Excel/CSV file, or
+   - Paste a list of email addresses into the textarea and click **Parse Emails**. Review the valid/duplicate/invalid counts, then click **Merge into Recipients**.
+3. **Template tab** — write your email using the `{{placeholder}}` chips, click **Preview Email**, then **Send Test Email** to confirm it looks right. Use the **Templates** button to save/load templates.
+4. **Send tab** — review the campaign summary, then click **Confirm & Start**. Use **Pause/Resume/Stop** anytime.
 
 When it finishes, check the `logs/` folder for the full send log, any failed-email report, and the summary.
+
+## Recipient Parser
+
+The smart parser supports multiple formats:
+
+```
+hr@company1.com
+careers@company2.com
+recruiter@company3.com
+John <john@company.com>
+Recruiter Name <recruiter@company3.com>
+hr@company1.com, careers@company2.com, recruiter@company3.com
+hr@company1.com; careers@company2.com; recruiter@company3.com
+```
+
+After parsing:
+- **Valid** emails are ready to merge
+- **Duplicates** are detected and skipped
+- **Invalid** entries are shown for review
+
+## Placeholder Fallback
+
+Use the `|` syntax for fallback values:
+
+```
+{{name|there}}
+```
+
+If `name` exists in the recipient data, it is used. Otherwise, `there` is shown.
 
 ## Notes on Responsible Use
 
@@ -146,10 +235,66 @@ When it finishes, check the `logs/` folder for the full send log, any failed-ema
 - The app only emails addresses that pass validation and skips any address it has already successfully emailed, so re-running after an interruption is safe.
 - This tool is intended for personal job-search outreach to individually named contacts — not for unsolicited mass marketing.
 
+## Security
+
+This application sends real emails. **Do not expose an unauthenticated
+instance to the public internet.** Use authentication and HTTPS for any
+remote deployment. **Never commit Gmail OAuth credentials, SMTP
+passwords, or your `APP_PASSWORD_HASH`/`APP_SECRET_KEY` to Git.**
+
+What the deployment is hardened with:
+
+- Single-user login (username + bcrypt password) with a server-side
+  signed session cookie (HttpOnly, SameSite=Lax, Secure in production)
+  and a `12` hour default session lifetime.
+- CSRF token required on every state-changing API request when
+  authentication is enabled.
+- Login rate limiting: 5 failures per IP per 10 minutes and
+  8 failures per username per 15 minutes, with `429` responses.
+- Same-origin deployment by default. CORS is disabled unless
+  `CORS_ALLOW_ORIGINS` is set, and is never combined with
+  `allow_origins=["*"]`.
+- Security headers: `X-Content-Type-Options`, `Referrer-Policy`,
+  `X-Frame-Options`, a strict `Content-Security-Policy` on HTML
+  responses, and `Strict-Transport-Security` in production.
+- File uploads are limited to 25 MB, validated against a per-kind
+  extension allowlist, written to a generated server-side filename,
+  validated to stay inside the uploads directory, and cleaned up on
+  failure.
+- The SQLite database, OAuth token file, and `.env` are never served
+  as static files.
+- Python tracebacks are never returned to the user; they are logged
+  server-side.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the step-by-step remote
+deployment checklist.
+
+### Gmail API status
+
+The Gmail API code path is implemented and will be used when
+`credentials/credentials.json` is present, but **real Gmail API sending
+has not been verified end-to-end** because no live credentials were
+available during development. To use it, you must:
+
+1. Create a Google Cloud project and enable the **Gmail API**.
+2. Create an OAuth **Desktop App** client and download the JSON to
+   `credentials/credentials.json`.
+3. Make sure the OAuth client's redirect URI matches what the app
+   uses for the local OAuth flow.
+4. Trigger any send — the first call will open a browser window for
+   you to grant access; the resulting token is cached in
+   `credentials/token.json`.
+
+If the Gmail API is not configured, the app automatically falls back
+to SMTP using `SMTP_EMAIL` / `SMTP_APP_PASSWORD` from `.env`.
+
 ## Troubleshooting
 
 - **"SMTP_EMAIL / SMTP_APP_PASSWORD not set"** → check your `.env` file.
 - **"Gmail API credentials.json not found"** → either add the file or ensure SMTP is configured in `.env`.
+- **"Refusing to start: APP_USERNAME, APP_PASSWORD_HASH and APP_SECRET_KEY must be set when APP_ENV=production"** → set those three values in `.env` (or unset `APP_ENV`).
+- **"Authentication required"** on every request → log in at `/login`. If you intentionally want to run without auth, clear all three of `APP_USERNAME`, `APP_PASSWORD_HASH`, `APP_SECRET_KEY` from `.env`.
+- **"CSRF token missing or invalid"** → your session was lost (cookie expired). Refresh and log in again.
 - **Emails landing in spam** → increase the delay range, personalize the template further, and avoid sending to very large lists in one sitting.
 - **`ModuleNotFoundError`** → run `pip install -r requirements.txt`.
 

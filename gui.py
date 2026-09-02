@@ -6,11 +6,10 @@ Tabs: Setup -> Recipients -> Template -> Send
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
-import shutil
 
 from config import Settings
 import excel_io
-from template_engine import render, extract_placeholders, text_to_html
+from template_engine import render, text_to_html
 from validators import is_valid_email
 from mailer import EmailSender, SendError
 from sender_worker import SendWorker
@@ -169,15 +168,65 @@ class ResumeMailerApp:
                    command=self._import_recipients).pack(side="left")
         ttk.Button(btn_row, text="Download Sample Template",
                    command=self._download_sample).pack(side="left", padx=8)
+
+        ttk.Separator(t).pack(fill="x", pady=14)
+
+        ttk.Label(t, text="Paste Email Addresses", style="Header.TLabel").pack(anchor="w", pady=(0, 6))
+        ttk.Label(t, text="Paste emails (newline, comma, or semicolon separated). Supports Name <email> format.",
+                  foreground="#555").pack(anchor="w", pady=(0, 6))
+        self.txt_paste = scrolledtext.ScrolledText(t, width=95, height=8, font=("Segoe UI", 10), wrap="word")
+        self.txt_paste.pack(pady=(0, 8))
+        paste_btn_row = ttk.Frame(t)
+        paste_btn_row.pack(anchor="w", pady=(0, 10))
+        ttk.Button(paste_btn_row, text="Parse Emails", style="Primary.TButton",
+                   command=self._parse_pasted_emails).pack(side="left")
+        ttk.Button(paste_btn_row, text="Merge into Recipients",
+                   command=self._merge_parsed_recipients).pack(side="left", padx=8)
+        self.lbl_parse_summary = ttk.Label(t, text="", foreground="#555")
+        self.lbl_parse_summary.pack(anchor="w", pady=(0, 10))
+
         self.lbl_recipient_count = ttk.Label(t, text="No recipients loaded.")
         self.lbl_recipient_count.pack(anchor="w", pady=(6, 6))
 
         columns = ("hr_name", "company", "email", "job_role", "location")
-        self.tree = ttk.Treeview(t, columns=columns, show="headings", height=18)
+        self.tree = ttk.Treeview(t, columns=columns, show="headings", height=14)
         for col in columns:
             self.tree.heading(col, text=col.replace("_", " ").title())
             self.tree.column(col, width=150)
         self.tree.pack(fill="both", expand=True)
+
+        self._parsed_valid = []
+        self._parsed_invalid = []
+        self._parsed_duplicates = []
+
+    def _parse_pasted_emails(self):
+        from recipient_parser import parse_recipients
+        raw = self.txt_paste.get("1.0", "end").strip()
+        if not raw:
+            messagebox.showinfo("Empty", "Paste some email addresses first.")
+            return
+        result = parse_recipients(raw)
+        self._parsed_valid = result["valid"]
+        self._parsed_invalid = result["invalid"]
+        self._parsed_duplicates = result["duplicates"]
+        self.lbl_parse_summary.config(
+            text=f"Valid: {len(result['valid'])} | Duplicates: {len(result['duplicates'])} | Invalid: {len(result['invalid'])}"
+        )
+        if result["invalid"]:
+            messagebox.showinfo("Invalid Entries", "\n".join(result["invalid"]))
+
+    def _merge_parsed_recipients(self):
+        if not self._parsed_valid:
+            messagebox.showinfo("Nothing to Merge", "Parse emails first.")
+            return
+        merged, new_count, dup_count = self._merge_recipients(self.recipients, self._parsed_valid)
+        self.recipients = merged
+        self._refresh_tree()
+        self.txt_paste.delete("1.0", "end")
+        self._parsed_valid = []
+        self._parsed_invalid = []
+        self._parsed_duplicates = []
+        self.lbl_parse_summary.config(text=f"Merged {new_count} new (skipped {dup_count} duplicates)")
 
     def _import_recipients(self):
         path = filedialog.askopenfilename(filetypes=[("Spreadsheet", "*.xlsx *.xls *.csv")])
@@ -202,6 +251,23 @@ class ResumeMailerApp:
         self.lbl_recipient_count.config(
             text=f"{len(self.recipients)} recipients loaded ({valid} with valid emails)."
         )
+
+    def _merge_recipients(self, existing, new_ones):
+        existing_lower = {r.get("email", "").lower(): r for r in existing if r.get("email")}
+        merged = list(existing)
+        new_count = 0
+        dup_count = 0
+        for r in new_ones:
+            email = r.get("email", "").lower()
+            if not email:
+                continue
+            if email in existing_lower:
+                dup_count += 1
+                continue
+            merged.append(r)
+            existing_lower[email] = r
+            new_count += 1
+        return merged, new_count, dup_count
 
     def _download_sample(self):
         out = filedialog.asksaveasfilename(defaultextension=".xlsx", initialfile="recipients_sample.xlsx")

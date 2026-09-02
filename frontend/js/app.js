@@ -13,6 +13,8 @@ const state = {
   settings: {},
   sendStatus: 'idle',
   pollTimer: null,
+  repeatStatus: 'idle',
+  repeatPollTimer: null,
 };
 
 // ============================================
@@ -29,13 +31,11 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function Path(p) {
-  try {
-    const url = new URL(p, window.location.origin);
-    return { name: url.pathname.split('/').pop() || p };
-  } catch {
-    return { name: p.split('/').pop() || p };
-  }
+function basename(p) {
+  if (!p) return '';
+  const s = String(p).replace(/\\/g, '/');
+  const i = s.lastIndexOf('/');
+  return i >= 0 ? s.slice(i + 1) : s;
 }
 
 // ============================================
@@ -48,15 +48,23 @@ const $ = (id) => document.getElementById(id);
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
   initNavigation();
+  initAuth();
   initSetup();
   initRecipients();
   initTemplate();
   initSend();
+  initRepeatSend();
   initFileUploads();
+  initModals();
   loadInitialData();
   startPolling();
   initCardGlow();
 });
+
+function initAuth() {
+  const btn = $('logout-btn');
+  if (btn) btn.addEventListener('click', logout);
+}
 
 // ============================================
 // Card Glow Effect
@@ -134,18 +142,54 @@ function switchView(view) {
 // ============================================
 // API Helpers
 // ============================================
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function getCookie(name) {
+  const prefix = `${name}=`;
+  const parts = (document.cookie || '').split(';');
+  for (const p of parts) {
+    const c = p.trim();
+    if (c.startsWith(prefix)) return decodeURIComponent(c.slice(prefix.length));
+  }
+  return '';
+}
+
+function buildHeaders(options) {
+  const headers = { ...(options.headers || {}) };
+  const method = (options.method || 'GET').toUpperCase();
+  if (UNSAFE_METHODS.has(method)) {
+    const csrf = getCookie('rm_csrf');
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+  }
+  return headers;
+}
+
+function handleAuthError(res) {
+  if (res.status === 401) {
+    // Session expired or not logged in.
+    window.location.replace('/login');
+    return true;
+  }
+  return false;
+}
+
 async function api(path, options = {}) {
   const url = `${API_BASE}${path}`;
   const config = {
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     ...options,
   };
+  config.headers = buildHeaders(config);
 
   if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
     config.body = JSON.stringify(options.body);
   }
 
   const res = await fetch(url, config);
+  if (handleAuthError(res)) {
+    throw new Error('Not authenticated');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `HTTP ${res.status}`);
@@ -156,8 +200,13 @@ async function api(path, options = {}) {
 async function apiFile(path, formData) {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
+    credentials: 'same-origin',
+    headers: buildHeaders({ method: 'POST' }),
     body: formData,
   });
+  if (handleAuthError(res)) {
+    throw new Error('Not authenticated');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `HTTP ${res.status}`);
@@ -216,7 +265,7 @@ async function loadInitialData() {
 
     populateSetupForm(settings);
     renderRecipientsTable(state.recipients);
-    updateRecipientsSummary();
+    updateRecipientsSummary(recipients);
   } catch (err) {
     showToast('Failed to load initial data: ' + err.message, 'error');
   }
@@ -240,7 +289,7 @@ function populateSetupForm(s) {
   $('use-gmail-api').checked = s.use_gmail_api !== false;
   $('resume-path').value = s.resume_path || '';
   if (s.resume_path) {
-    $('resume-label').textContent = Path(s.resume_path).name;
+    $('resume-label').textContent = basename(s.resume_path);
   }
 }
 
@@ -317,6 +366,66 @@ function initRecipients() {
   $('download-sample-btn').addEventListener('click', downloadSample);
   $('clear-recipients-btn').addEventListener('click', clearRecipients);
   $('recipients-search').addEventListener('input', (e) => filterRecipients(e.target.value));
+
+  // Paste email parsing
+  $('parse-emails-btn').addEventListener('click', parsePastedEmails);
+  $('merge-recipients-btn').addEventListener('click', mergeParsedRecipients);
+}
+
+let parsedRecipientsCache = { valid: [], invalid: [], duplicates: [] };
+const PAGE_SIZE = 100;
+let currentPage = 1;
+let currentViewRecipients = [];
+
+async function parsePastedEmails() {
+  const raw = $('paste-emails').value;
+  if (!raw.trim()) {
+    showToast('Please paste some email addresses first', 'error');
+    return;
+  }
+  try {
+    const result = await api('/api/recipients/parse', {
+      method: 'POST',
+      body: { raw_text: raw },
+    });
+    parsedRecipientsCache = result;
+    $('parse-valid').textContent = `${result.valid} valid`;
+    $('parse-duplicates').textContent = `${result.duplicates} duplicates`;
+    $('parse-invalid').textContent = `${result.invalid} invalid`;
+    $('parse-summary').style.display = 'flex';
+    $('merge-recipients-btn').disabled = result.valid === 0;
+
+    if (result.invalid > 0) {
+      $('invalid-list').style.display = 'block';
+      $('invalid-entries').innerHTML = result.invalid_entries.map(e => `<span class="chip chip-danger">${escapeHtml(e)}</span>`).join(' ');
+    } else {
+      $('invalid-list').style.display = 'none';
+    }
+    showToast(`Parsed ${result.valid} valid, ${result.duplicates} duplicates, ${result.invalid} invalid`, 'success');
+  } catch (err) {
+    showToast('Parse failed: ' + err.message, 'error');
+  }
+}
+
+async function mergeParsedRecipients() {
+  if (!parsedRecipientsCache.valid.length) return;
+  try {
+    const result = await api('/api/recipients/merge', {
+      method: 'POST',
+      body: { new_recipients: parsedRecipientsCache.valid },
+    });
+    state.recipients = result.recipients || [];
+    renderRecipientsTable(state.recipients);
+    updateRecipientsSummary(result);
+    showToast(`Merged ${result.new_added} new recipients (${result.duplicates_removed} duplicates skipped)`, 'success');
+    $('paste-emails').value = '';
+    $('parse-summary').style.display = 'none';
+    $('invalid-list').style.display = 'none';
+    $('merge-recipients-btn').disabled = true;
+    parsedRecipientsCache = { valid: [], invalid: [], duplicates: [] };
+  } catch (err) {
+    showToast('Merge failed: ' + err.message, 'error');
+  }
 }
 
 async function handleRecipientFile(file) {
@@ -328,7 +437,7 @@ async function handleRecipientFile(file) {
     const result = await apiFile('/api/recipients/import', formData);
     state.recipients = result.recipients || [];
     renderRecipientsTable(state.recipients);
-    updateRecipientsSummary(result.imported, result.valid_emails);
+    updateRecipientsSummary(result);
     showToast(`Imported ${result.imported} recipients (${result.valid_emails} valid emails)`, 'success');
   } catch (err) {
     showToast('Import failed: ' + err.message, 'error');
@@ -338,14 +447,35 @@ async function handleRecipientFile(file) {
 function renderRecipientsTable(recipients) {
   const tbody = $('recipients-tbody');
   const container = $('recipients-table-container');
+  const badge = $('recipient-count-badge');
 
-  if (!recipients.length) {
+  currentViewRecipients = recipients || [];
+  currentPage = 1;
+  _renderCurrentPage();
+
+  if (!currentViewRecipients.length) {
     container.style.display = 'none';
+    if (badge) badge.style.display = 'none';
     return;
   }
-
   container.style.display = 'block';
-  tbody.innerHTML = recipients.map(r => {
+  if (badge) { badge.style.display = 'inline-flex'; badge.textContent = currentViewRecipients.length; }
+}
+
+function _renderCurrentPage() {
+  const tbody = $('recipients-tbody');
+  if (!currentViewRecipients.length) {
+    tbody.innerHTML = '';
+    return;
+  }
+  const total = currentViewRecipients.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const end = Math.min(total, start + PAGE_SIZE);
+  const slice = currentViewRecipients.slice(start, end);
+
+  const rowsHtml = slice.map(r => {
     const valid = is_valid_email(r.email);
     const statusBadge = valid
       ? '<span class="badge badge-success">Valid</span>'
@@ -361,20 +491,66 @@ function renderRecipientsTable(recipients) {
       </tr>
     `;
   }).join('');
+
+  let pager = '';
+  if (totalPages > 1) {
+    pager = `
+      <tr class="pager-row">
+        <td colspan="6" style="text-align:center; padding: 12px;">
+          <button class="btn btn-ghost btn-sm" id="page-prev" ${currentPage === 1 ? 'disabled' : ''}>‹ Prev</button>
+          <span style="margin: 0 12px; color: var(--text-muted);">Page ${currentPage} of ${totalPages} · ${start+1}–${end} of ${total}</span>
+          <button class="btn btn-ghost btn-sm" id="page-next" ${currentPage === totalPages ? 'disabled' : ''}>Next ›</button>
+        </td>
+      </tr>
+    `;
+  }
+
+  tbody.innerHTML = rowsHtml + pager;
+
+  const prev = $('page-prev');
+  const next = $('page-next');
+  if (prev) prev.addEventListener('click', () => { currentPage--; _renderCurrentPage(); });
+  if (next) next.addEventListener('click', () => { currentPage++; _renderCurrentPage(); });
 }
 
-function updateRecipientsSummary(total, valid) {
+function updateRecipientsSummary(stats) {
   const summary = $('recipients-summary');
+  const badge = $('recipient-count-badge');
   if (!state.recipients.length) {
     summary.style.display = 'none';
+    if (badge) badge.style.display = 'none';
     return;
   }
   summary.style.display = 'flex';
-  const totalCount = total ?? state.recipients.length;
-  const validCount = valid ?? state.recipients.filter(r => is_valid_email(r.email)).length;
-  $('total-recipients').textContent = totalCount;
-  $('valid-recipients').textContent = validCount;
-  $('invalid-recipients').textContent = totalCount - validCount;
+  if (badge) { badge.style.display = 'inline-flex'; badge.textContent = state.recipients.length; }
+
+  let total = state.recipients.length;
+  let valid = 0, invalid = 0, duplicates = 0, previouslySent = 0, ready = 0;
+  if (stats) {
+    if (typeof stats.count === 'number') total = stats.count;
+    if (typeof stats.valid === 'number') valid = stats.valid;
+    if (typeof stats.invalid === 'number') invalid = stats.invalid;
+    if (typeof stats.duplicates === 'number') duplicates = stats.duplicates;
+    if (typeof stats.previously_sent === 'number') previouslySent = stats.previously_sent;
+    if (typeof stats.ready === 'number') ready = stats.ready;
+  }
+  if (!stats) {
+    const seen = new Set();
+    state.recipients.forEach(r => {
+      const email = (r.email || '').toLowerCase().trim();
+      if (!is_valid_email(email)) { invalid++; return; }
+      valid++;
+      if (seen.has(email)) { duplicates++; return; }
+      seen.add(email);
+      ready++;
+    });
+  }
+  $('total-recipients').textContent = total;
+  $('valid-recipients').textContent = valid;
+  $('invalid-recipients').textContent = invalid;
+  $('duplicate-recipients').textContent = duplicates;
+  $('previously-sent-recipients').textContent = previouslySent;
+  $('ready-recipients').textContent = ready;
 }
 
 function filterRecipients(query) {
@@ -394,7 +570,9 @@ function clearRecipients() {
 
 async function downloadSample() {
   try {
-    const res = await fetch('/api/files/sample');
+    const res = await fetch('/api/files/sample', { credentials: 'same-origin' });
+    if (res.status === 401) { window.location.replace('/login'); return; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -406,6 +584,20 @@ async function downloadSample() {
   } catch (err) {
     showToast('Download failed: ' + err.message, 'error');
   }
+}
+
+// ============================================
+// Logout
+// ============================================
+async function logout() {
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: buildHeaders({ method: 'POST' }),
+    });
+  } catch (_) { /* proceed to redirect anyway */ }
+  window.location.replace('/login');
 }
 
 // ============================================
@@ -425,6 +617,23 @@ function initTemplate() {
       body.setRangeText(`{{${ph}}}`, body.selectionStart, body.selectionEnd, 'end');
       body.focus();
     }
+  });
+
+  $('insert-fallback-btn').addEventListener('click', () => {
+    const fallback = $('fallback-input').value.trim();
+    if (!fallback) {
+      showToast('Enter fallback text first', 'error');
+      return;
+    }
+    const sel = body.value.substring(body.selectionStart, body.selectionEnd);
+    if (sel && sel.startsWith('{{') && sel.endsWith('}}')) {
+      const ph = sel.slice(2, -2).split('|')[0].trim();
+      body.setRangeText(`{{${ph}|${fallback}}}`, body.selectionStart, body.selectionEnd, 'end');
+    } else {
+      body.setRangeText(`{{name|${fallback}}}`, body.selectionStart, body.selectionEnd, 'end');
+    }
+    body.focus();
+    showToast('Fallback placeholder inserted', 'success');
   });
 
   $('preview-btn').addEventListener('click', generatePreview);
@@ -544,6 +753,192 @@ function initSend() {
   });
 }
 
+function initRepeatSend() {
+  const emailInput = $('repeat-email');
+  const countInput = $('repeat-count');
+  const delayInput = $('repeat-delay');
+  const summary = $('repeat-summary');
+  const sendBtn = $('repeat-send-btn');
+  const sendBtnText = $('repeat-send-btn-text');
+  const stopBtn = $('repeat-stop-btn');
+  const clearBtn = $('clear-repeat-log-btn');
+
+  function updateSummary() {
+    const email = (emailInput.value || '').trim();
+    const count = Math.max(1, Math.min(20, parseInt(countInput.value) || 1));
+    const delay = Math.max(1, Math.min(60, parseInt(delayInput.value) || 5));
+    if (count === 1) {
+      summary.textContent = email
+        ? `This email will be sent 1 time to ${email}.`
+        : 'This email will be sent 1 time.';
+      sendBtnText.textContent = 'Send Email';
+    } else {
+      summary.textContent = email
+        ? `This email will be sent ${count} times to ${email}. Delay: ${delay} seconds between emails.`
+        : `This email will be sent ${count} times. Delay: ${delay} seconds between emails.`;
+      sendBtnText.textContent = `Send Email ${count} Times`;
+    }
+  }
+
+  [emailInput, countInput, delayInput].forEach(el => {
+    if (el) el.addEventListener('input', updateSummary);
+    if (el) el.addEventListener('change', updateSummary);
+  });
+
+  updateSummary();
+
+  sendBtn.addEventListener('click', async () => {
+    const email = (emailInput.value || '').trim();
+    const count = Math.max(1, Math.min(20, parseInt(countInput.value) || 1));
+    const delay = Math.max(1, Math.min(60, parseInt(delayInput.value) || 5));
+
+    if (!email) {
+      showToast('Please enter a recipient email address', 'error');
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showToast('Please enter a valid email address', 'error');
+      return;
+    }
+
+    if (count > 1) {
+      const confirmed = await showConfirm(
+        `You are about to send this email ${count} times to ${email}. Continue?`,
+        `Send ${count} Emails`
+      );
+      if (!confirmed) return;
+    }
+
+    const subject = $('email-subject').value;
+    const body = $('email-body').value;
+    const signature = $('email-signature').value;
+    const resumePath = state.settings.resume_path || '';
+    const attachments = resumePath ? [resumePath] : [];
+
+    try {
+      await api('/api/repeat-send/start', {
+        method: 'POST',
+        body: {
+          to_email: email,
+          subject,
+          body,
+          signature,
+          count,
+          delay_seconds: delay,
+          attachments,
+        },
+      });
+      updateRepeatSendUI('running');
+      startRepeatPolling();
+      showToast('Repeat send started', 'success');
+    } catch (err) {
+      showToast('Failed to start repeat send: ' + err.message, 'error');
+    }
+  });
+
+  stopBtn.addEventListener('click', async () => {
+    try {
+      await api('/api/repeat-send/stop', { method: 'POST' });
+      updateRepeatSendUI('stopped');
+      showToast('Repeat send stopped', 'warning');
+    } catch (err) {
+      showToast('Stop failed: ' + err.message, 'error');
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    $('repeat-log-box').innerHTML = '<div class="log-empty">Waiting to start...</div>';
+  });
+}
+
+function updateRepeatSendUI(status) {
+  state.repeatStatus = status;
+  const isRunning = status === 'running';
+  const isStopped = status === 'stopped';
+  const isIdle = status === 'idle' || isStopped;
+
+  $('repeat-send-btn').disabled = !isIdle;
+  $('repeat-stop-btn').disabled = isIdle;
+  $('repeat-email').disabled = !isIdle;
+  $('repeat-count').disabled = !isIdle;
+  $('repeat-delay').disabled = !isIdle;
+
+  if (isRunning) {
+    $('repeat-progress-container').style.display = 'flex';
+    $('repeat-log-container').style.display = 'block';
+  }
+}
+
+function startRepeatPolling() {
+  if (state.repeatPollTimer) clearInterval(state.repeatPollTimer);
+  state.repeatPollTimer = setInterval(pollRepeatStatus, 500);
+}
+
+async function pollRepeatStatus() {
+  try {
+    const data = await api('/api/repeat-send/status');
+    const { repeat_status, progress, logs } = data;
+
+    if (progress) {
+      const total = progress.total || 1;
+      const current = progress.current || 0;
+      const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+      $('repeat-progress-fill').style.width = `${pct}%`;
+      $('repeat-progress-text').textContent = `${current}/${total}`;
+    }
+
+    if (repeat_status && repeat_status !== state.repeatStatus) {
+      const isDone = ['completed', 'stopped', 'error'].includes(repeat_status);
+      updateRepeatSendUI(isDone ? 'idle' : repeat_status);
+      if (isDone && state.repeatPollTimer) {
+        clearInterval(state.repeatPollTimer);
+        state.repeatPollTimer = null;
+      }
+    }
+
+    if (logs && logs.length) {
+      const logBox = $('repeat-log-box');
+      logBox.innerHTML = logs.slice(-50).map(line => `<div class="log-line">${escapeHtml(line)}</div>`).join('');
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+  } catch (err) {
+    // Silently ignore poll errors
+  }
+}
+
+function showConfirm(message, confirmLabel) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <p class="modal-message">${escapeHtml(message)}</p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+          <button class="btn btn-primary" id="modal-confirm">${escapeHtml(confirmLabel || 'Confirm')}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#modal-cancel').addEventListener('click', () => {
+      overlay.remove();
+      resolve(false);
+    });
+    overlay.querySelector('#modal-confirm').addEventListener('click', () => {
+      overlay.remove();
+      resolve(true);
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+        resolve(false);
+      }
+    });
+  });
+}
+
 async function startSend() {
   const subject = $('email-subject').value;
   const body = $('email-body').value;
@@ -554,16 +949,41 @@ async function startSend() {
     return;
   }
 
-  try {
-    await api('/api/send/start', {
-      method: 'POST',
-      body: { subject, body, signature, attachments: [] },
-    });
-    updateSendUI('running');
-    showToast('Campaign started', 'success');
-  } catch (err) {
-    showToast('Failed to start: ' + err.message, 'error');
-  }
+  const validCount = state.recipients.filter(r => is_valid_email(r.email)).length;
+  const invalidCount = state.recipients.length - validCount;
+
+  // Show review modal
+  $('review-total').textContent = state.recipients.length;
+  $('review-valid').textContent = validCount;
+  $('review-invalid').textContent = invalidCount;
+  $('review-subject').textContent = subject || '(no subject)';
+
+  const attachments = collectAttachments();
+  $('review-attachments').textContent = attachments.length ? attachments.map(a => a.split('/').pop()).join(', ') : 'None';
+
+  const delayMin = $('delay-min').value || '5';
+  const delayMax = $('delay-max').value || '15';
+  $('review-delay').textContent = `${delayMin}–${delayMax}s`;
+  $('review-retries').textContent = $('max-retries').value || '3';
+
+  showModal('campaign-review-modal');
+
+  $('review-confirm-btn').onclick = async () => {
+    hideModal('campaign-review-modal');
+    try {
+      await api('/api/send/start', {
+        method: 'POST',
+        body: { subject, body, signature, attachments },
+      });
+      updateSendUI('running');
+      showToast('Campaign started', 'success');
+    } catch (err) {
+      showToast('Failed to start: ' + err.message, 'error');
+    }
+  };
+
+  $('review-cancel-btn').onclick = () => hideModal('campaign-review-modal');
+  $('close-campaign-review').onclick = () => hideModal('campaign-review-modal');
 }
 
 async function pauseSend() {
@@ -617,6 +1037,244 @@ function updateSendUI(status) {
 }
 
 // ============================================
+// Modal Helpers
+// ============================================
+function showModal(id) {
+  const el = $(id);
+  if (el) { el.style.display = 'flex'; }
+}
+
+function hideModal(id) {
+  const el = $(id);
+  if (el) { el.style.display = 'none'; }
+}
+
+function collectAttachments() {
+  const files = [];
+  const resume = state.settings.resume_path || '';
+  if (resume) files.push(resume);
+  const extraTags = document.querySelectorAll('#extra-files-list .file-tag button');
+  extraTags.forEach(btn => { if (btn.dataset.path) files.push(btn.dataset.path); });
+  return files;
+}
+
+// ============================================
+// Template Library
+// ============================================
+async function loadTemplateLibrary() {
+  try {
+    const data = await api('/api/templates');
+    const list = $('template-list');
+    if (!data.templates || !data.templates.length) {
+      list.innerHTML = '<p class="empty-hint">No saved templates yet.</p>';
+      return;
+    }
+    list.innerHTML = data.templates.map(t => `
+      <div class="template-item">
+        <div class="template-info">
+          <strong>${escapeHtml(t.name)}</strong>
+          <p class="form-hint">${escapeHtml(t.subject || 'No subject')}</p>
+        </div>
+        <div class="template-actions">
+          <button class="btn btn-secondary btn-sm" onclick="applyTemplate(${t.id})">Use</button>
+          <button class="btn btn-ghost btn-sm" onclick="deleteTemplate(${t.id})">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    showToast('Failed to load templates: ' + err.message, 'error');
+  }
+}
+
+async function applyTemplate(templateId) {
+  try {
+    const tpl = await api(`/api/templates/${templateId}`);
+    $('email-subject').value = tpl.subject;
+    $('email-body').value = tpl.body;
+    $('email-signature').value = tpl.signature;
+    hideModal('template-library-modal');
+    showToast('Template applied', 'success');
+  } catch (err) {
+    showToast('Failed to load template: ' + err.message, 'error');
+  }
+}
+
+async function saveCurrentAsTemplate() {
+  const name = prompt('Template name:');
+  if (!name) return;
+  try {
+    await api('/api/templates', {
+      method: 'POST',
+      body: {
+        name,
+        subject: $('email-subject').value,
+        body: $('email-body').value,
+        signature: $('email-signature').value,
+      },
+    });
+    showToast('Template saved', 'success');
+    loadTemplateLibrary();
+  } catch (err) {
+    showToast('Failed to save template: ' + err.message, 'error');
+  }
+}
+
+async function deleteTemplate(templateId) {
+  if (!confirm('Delete this template?')) return;
+  try {
+    await api(`/api/templates/${templateId}`, { method: 'DELETE' });
+    showToast('Template deleted', 'info');
+    loadTemplateLibrary();
+  } catch (err) {
+    showToast('Failed to delete template: ' + err.message, 'error');
+  }
+}
+
+// ============================================
+// Drafts
+// ============================================
+async function loadDrafts() {
+  try {
+    const data = await api('/api/drafts');
+    const list = $('draft-list');
+    if (!data.drafts || !data.drafts.length) {
+      list.innerHTML = '<p class="empty-hint">No saved drafts yet.</p>';
+      return;
+    }
+    list.innerHTML = data.drafts.map(d => `
+      <div class="template-item">
+        <div class="template-info">
+          <strong>${escapeHtml(d.name || 'Untitled Draft')}</strong>
+          <p class="form-hint">${escapeHtml(d.subject || 'No subject')}</p>
+          <p class="form-hint">${d.recipients ? d.recipients.length : 0} recipients</p>
+        </div>
+        <div class="template-actions">
+          <button class="btn btn-secondary btn-sm" onclick="loadDraft(${d.id})">Open</button>
+          <button class="btn btn-ghost btn-sm" onclick="deleteDraft(${d.id})">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    showToast('Failed to load drafts: ' + err.message, 'error');
+  }
+}
+
+async function loadDraft(draftId) {
+  try {
+    const d = await api(`/api/drafts/${draftId}`);
+    $('email-subject').value = d.subject;
+    $('email-body').value = d.body;
+    $('email-signature').value = d.signature;
+    if (d.recipients && d.recipients.length) {
+      state.recipients = d.recipients;
+      renderRecipientsTable(state.recipients);
+      updateRecipientsSummary(null);
+    }
+    hideModal('drafts-modal');
+    showToast('Draft loaded', 'success');
+  } catch (err) {
+    showToast('Failed to load draft: ' + err.message, 'error');
+  }
+}
+
+async function saveCurrentAsDraft() {
+  const name = prompt('Draft name:');
+  if (!name) return;
+  try {
+    await api('/api/drafts', {
+      method: 'POST',
+      body: {
+        name,
+        subject: $('email-subject').value,
+        body: $('email-body').value,
+        signature: $('email-signature').value,
+        recipients: state.recipients,
+        attachments: collectAttachments(),
+        settings: state.settings,
+      },
+    });
+    showToast('Draft saved', 'success');
+    loadDrafts();
+  } catch (err) {
+    showToast('Failed to save draft: ' + err.message, 'error');
+  }
+}
+
+async function deleteDraft(draftId) {
+  if (!confirm('Delete this draft?')) return;
+  try {
+    await api(`/api/drafts/${draftId}`, { method: 'DELETE' });
+    showToast('Draft deleted', 'info');
+    loadDrafts();
+  } catch (err) {
+    showToast('Failed to delete draft: ' + err.message, 'error');
+  }
+}
+
+// ============================================
+// Campaign History
+// ============================================
+async function loadCampaignHistory() {
+  try {
+    const data = await api('/api/campaigns');
+    const list = $('campaign-list');
+    if (!data.campaigns || !data.campaigns.length) {
+      list.innerHTML = '<p class="empty-hint">No campaigns yet.</p>';
+      return;
+    }
+    list.innerHTML = data.campaigns.map(c => `
+      <div class="template-item">
+        <div class="template-info">
+          <strong>Campaign #${c.id}</strong>
+          <p class="form-hint">${escapeHtml(c.subject || 'No subject')}</p>
+          <p class="form-hint">Sent: ${c.sent_count} | Failed: ${c.failed_count} | Skipped: ${c.skipped_count} | Status: ${c.status}</p>
+          <p class="form-hint">${new Date(c.created_at).toLocaleString()}</p>
+        </div>
+        <div class="template-actions">
+          <button class="btn btn-secondary btn-sm" onclick="viewCampaignRecipients(${c.id})">View Recipients</button>
+          <button class="btn btn-ghost btn-sm" onclick="deleteCampaign(${c.id})">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    showToast('Failed to load campaigns: ' + err.message, 'error');
+  }
+}
+
+async function viewCampaignRecipients(campaignId) {
+  try {
+    const data = await api(`/api/campaigns/${campaignId}/recipients`);
+    const rows = data.recipients || [];
+    if (!rows.length) {
+      showToast('No recipients for this campaign', 'info');
+      return;
+    }
+    const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(
+      'Email,HR Name,Company,Job Role,Location,Status,Error,Timestamp\n' +
+      rows.map(r => `"${r.email}","${r.hr_name}","${r.company}","${r.job_role}","${r.location}","${r.status}","${r.error}","${r.timestamp}"`).join('\n')
+    );
+    const a = document.createElement('a');
+    a.href = csvContent;
+    a.download = `campaign_${campaignId}_recipients.csv`;
+    a.click();
+    showToast('Recipients exported', 'success');
+  } catch (err) {
+    showToast('Failed to load recipients: ' + err.message, 'error');
+  }
+}
+
+async function deleteCampaign(campaignId) {
+  if (!confirm('Delete this campaign?')) return;
+  try {
+    await api(`/api/campaigns/${campaignId}`, { method: 'DELETE' });
+    showToast('Campaign deleted', 'info');
+    loadCampaignHistory();
+  } catch (err) {
+    showToast('Failed to delete campaign: ' + err.message, 'error');
+  }
+}
+
+// ============================================
 // Polling
 // ============================================
 function startPolling() {
@@ -660,6 +1318,43 @@ async function pollStatus() {
   } catch (err) {
     // Silently ignore poll errors
   }
+}
+
+// ============================================
+// Modals Initialization
+// ============================================
+function initModals() {
+  // Template library
+  const tplBtn = document.createElement('button');
+  tplBtn.className = 'btn btn-secondary';
+  tplBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg> Templates';
+  tplBtn.addEventListener('click', () => { loadTemplateLibrary(); showModal('template-library-modal'); });
+  const templateHeader = document.querySelector('#view-template .card-header');
+  if (templateHeader) templateHeader.appendChild(tplBtn);
+
+  $('save-current-template-btn').addEventListener('click', saveCurrentAsTemplate);
+  $('close-template-library').addEventListener('click', () => hideModal('template-library-modal'));
+
+  // Drafts
+  const draftBtn = document.createElement('button');
+  draftBtn.className = 'btn btn-secondary';
+  draftBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg> Drafts';
+  draftBtn.addEventListener('click', () => { loadDrafts(); showModal('drafts-modal'); });
+  const sendHeader = document.querySelector('#view-send .card-header');
+  if (sendHeader) sendHeader.appendChild(draftBtn);
+
+  $('save-draft-btn').addEventListener('click', saveCurrentAsDraft);
+  $('close-drafts-modal').addEventListener('click', () => hideModal('drafts-modal'));
+
+  // Campaign history
+  const historyBtn = document.createElement('button');
+  historyBtn.className = 'btn btn-ghost btn-sm';
+  historyBtn.textContent = 'History';
+  historyBtn.addEventListener('click', () => { loadCampaignHistory(); showModal('campaign-history-modal'); });
+  const topBarActions = document.querySelector('.top-bar-actions');
+  if (topBarActions) topBarActions.appendChild(historyBtn);
+
+  $('close-campaign-history').addEventListener('click', () => hideModal('campaign-history-modal'));
 }
 
 // ============================================

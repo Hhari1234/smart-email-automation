@@ -1,0 +1,53 @@
+# Render deployment configuration for ResumeMailer (Python FastAPI backend).
+#
+# This deploys a long-running Python web service with HTTPS, environment
+# variables, and a persistent disk for the SQLite database + uploads.
+#
+# Deploy via the Render dashboard: https://dashboard.render.com
+# Or with the Render CLI: `render deploy`
+
+databases:
+  - name: resumemailer-db
+    plan: starter
+    ipAllowList: []
+
+env:
+  - key: APP_ENV
+    value: production
+  - key: APP_USERNAME
+    value: admin
+  - key: APP_PASSWORD_HASH
+    # Generate: python -c "from auth import hash_password; print(hash_password('YOUR_PASSWORD'))"
+    value: CHANGE_ME_BCRYPT_HASH
+  - key: APP_SECRET_KEY
+    # Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
+    value: CHANGE_ME_64_CHAR_SECRET
+  - key: APP_SESSION_HOURS
+    value: "12"
+  - key: SMTP_EMAIL
+    value: your.email@gmail.com
+  - key: SMTP_APP_PASSWORD
+    value: your-16-char-app-password
+  - key: GMAIL_CREDENTIALS_FILE
+    value: credentials/credentials.json
+  - key: GMAIL_TOKEN_FILE
+    value: credentials/token.json
+
+# Persistent disk for SQLite DB + uploaded files + logs.
+disk:
+  - name: resumemailer-data
+    mountPath: /var/resumemailer
+    sizeGB: 1
+
+# Long-running web service (NOT a static site).
+services:
+  - type: web
+    name: resumemailer
+    region: oregon
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: APP_ENV=production uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    numInstances: 1

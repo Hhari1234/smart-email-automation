@@ -93,6 +93,14 @@
         <h1 class="page-title" id="page-title">Setup</h1>
         <div class="top-bar-actions">
           <span class="badge badge-success" id="api-status">SMTP Ready</span>
+          <button class="btn btn-ghost btn-sm" id="logout-btn" type="button" title="Sign out">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            <span>Logout</span>
+          </button>
         </div>
       </header>
 
@@ -213,10 +221,10 @@
         <section class="view" id="view-recipients">
           <div class="view-header">
             <h2>Recipients</h2>
-            <p class="view-subtitle">Import your recipient list from Excel or CSV.</p>
+            <p class="view-subtitle">Import from Excel/CSV or paste email addresses directly.</p>
           </div>
 
-          <div class="glass-card">
+          <div class="glass-card" style="margin-bottom: 16px;">
             <div class="card-header">
               <h3>Import Recipients</h3>
             </div>
@@ -237,7 +245,49 @@
                   <button class="btn btn-ghost" id="download-sample-btn">Download Sample Template</button>
                 </div>
               </div>
+            </div>
+          </div>
 
+          <div class="glass-card" style="margin-bottom: 16px;">
+            <div class="card-header">
+              <h3>Paste Email Addresses</h3>
+            </div>
+            <div class="card-body">
+              <div class="form-group">
+                <label class="form-label" for="paste-emails">Paste emails (newline, comma, or semicolon separated)</label>
+                <textarea id="paste-emails" class="form-textarea" rows="6" placeholder="hr@company1.com&#10;careers@company2.com&#10;recruiter@company3.com"></textarea>
+              </div>
+              <div class="form-actions" style="margin-top: 12px;">
+                <button class="btn btn-primary" id="parse-emails-btn">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                  Parse Emails
+                </button>
+                <button class="btn btn-secondary" id="merge-recipients-btn" disabled>
+                  Merge into Recipients
+                </button>
+              </div>
+              <div class="parse-summary" id="parse-summary" style="display:none; margin-top: 16px;">
+                <div class="summary-chips">
+                  <span class="chip chip-success" id="parse-valid">0 valid</span>
+                  <span class="chip chip-warning" id="parse-duplicates">0 duplicates</span>
+                  <span class="chip chip-danger" id="parse-invalid">0 invalid</span>
+                </div>
+                <div id="invalid-list" style="margin-top: 12px; display:none;">
+                  <p class="form-hint">Invalid entries:</p>
+                  <div class="invalid-entries" id="invalid-entries"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card">
+            <div class="card-header">
+              <h3>Recipient List</h3>
+              <span class="badge" id="recipient-count-badge">0</span>
+            </div>
+            <div class="card-body">
               <div class="recipients-summary" id="recipients-summary" style="display:none;">
                 <div class="summary-stat">
                   <span class="summary-value" id="total-recipients">0</span>
@@ -245,11 +295,23 @@
                 </div>
                 <div class="summary-stat">
                   <span class="summary-value text-success" id="valid-recipients">0</span>
-                  <span class="summary-label">Valid Emails</span>
+                  <span class="summary-label">Valid</span>
                 </div>
                 <div class="summary-stat">
                   <span class="summary-value text-danger" id="invalid-recipients">0</span>
                   <span class="summary-label">Invalid</span>
+                </div>
+                <div class="summary-stat">
+                  <span class="summary-value text-warning" id="duplicate-recipients">0</span>
+                  <span class="summary-label">Duplicate</span>
+                </div>
+                <div class="summary-stat">
+                  <span class="summary-value text-muted" id="previously-sent-recipients">0</span>
+                  <span class="summary-label">Previously Sent</span>
+                </div>
+                <div class="summary-stat">
+                  <span class="summary-value text-accent" id="ready-recipients">0</span>
+                  <span class="summary-label">Ready</span>
                 </div>
               </div>
 
@@ -289,7 +351,7 @@
                               <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                             </svg>
                             <p>No recipients yet</p>
-                            <p class="empty-hint">Import an Excel or CSV file to get started.</p>
+                            <p class="empty-hint">Import an Excel/CSV file or paste email addresses above.</p>
                           </div>
                         </td>
                       </tr>
@@ -325,6 +387,10 @@
                 <h3>Email Body</h3>
                 <div class="placeholder-chips" id="placeholder-chips">
                   <!-- Populated by JS -->
+                </div>
+                <div class="fallback-row" style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+                  <input type="text" id="fallback-input" class="form-input" placeholder="Fallback text (e.g. there)" style="width: 180px;" />
+                  <button class="btn btn-ghost btn-sm" id="insert-fallback-btn">Insert Fallback</button>
                 </div>
               </div>
               <div class="card-body">
@@ -402,7 +468,60 @@
             <p class="view-subtitle">Start, monitor, and control your email campaign.</p>
           </div>
 
-          <div class="stats-grid" id="stats-grid">
+          <div class="glass-card" id="repeat-send-card">
+            <div class="card-header">
+              <h3>Repeat Sending</h3>
+            </div>
+            <div class="card-body">
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="repeat-email">Recipient Email</label>
+                  <input type="email" id="repeat-email" class="form-input" placeholder="example@gmail.com" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="repeat-count">Number of Times to Send</label>
+                  <input type="number" id="repeat-count" class="form-input" value="1" min="1" max="20" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="repeat-delay">Delay Between Emails (seconds)</label>
+                  <input type="number" id="repeat-delay" class="form-input" value="5" min="1" max="60" />
+                </div>
+              </div>
+              <p class="form-hint" id="repeat-summary">This email will be sent 1 time to the address above.</p>
+              <div class="send-controls" style="margin-top: 16px;">
+                <button class="btn btn-primary btn-lg" id="repeat-send-btn">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22,2 15,22 11,13 2,9 22,2"/>
+                  </svg>
+                  <span id="repeat-send-btn-text">Send Email</span>
+                </button>
+                <button class="btn btn-danger btn-lg" id="repeat-stop-btn" disabled>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  </svg>
+                  Stop Sending
+                </button>
+              </div>
+              <div class="progress-container" id="repeat-progress-container" style="display:none; margin-top: 16px;">
+                <div class="progress-bar" id="repeat-progress-bar">
+                  <div class="progress-fill" id="repeat-progress-fill"></div>
+                </div>
+                <div class="progress-text" id="repeat-progress-text">0%</div>
+              </div>
+              <div class="log-container" id="repeat-log-container" style="display:none; margin-top: 16px;">
+                <div class="log-header">
+                  <h4>Repeat Send Log</h4>
+                  <button class="btn btn-ghost btn-sm" id="clear-repeat-log-btn">Clear</button>
+                </div>
+                <div class="log-box" id="repeat-log-box">
+                  <div class="log-empty">Waiting to start...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stats-grid" id="stats-grid" style="margin-top: 20px;">
             <div class="stat-card glass-card">
               <div class="stat-icon">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -507,6 +626,90 @@
             </div>
           </div>
         </section>
+
+        <!-- Campaign Review Modal -->
+        <div class="modal-overlay" id="campaign-review-modal" style="display:none;">
+          <div class="modal-card modal-card-lg">
+            <div class="modal-header">
+              <h3>Campaign Review</h3>
+              <button class="modal-close" id="close-campaign-review">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="review-grid">
+                <div class="review-section">
+                  <h4>Recipients</h4>
+                  <div class="review-row"><span>Total</span><span id="review-total">0</span></div>
+                  <div class="review-row"><span>Valid</span><span class="text-success" id="review-valid">0</span></div>
+                  <div class="review-row"><span>Invalid</span><span class="text-danger" id="review-invalid">0</span></div>
+                </div>
+                <div class="review-section">
+                  <h4>Email</h4>
+                  <div class="review-row"><span>Subject</span><span id="review-subject">-</span></div>
+                  <div class="review-row"><span>Attachments</span><span id="review-attachments">-</span></div>
+                </div>
+                <div class="review-section">
+                  <h4>Sending</h4>
+                  <div class="review-row"><span>Delay</span><span id="review-delay">5–15s</span></div>
+                  <div class="review-row"><span>Retries</span><span id="review-retries">3</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button class="btn btn-secondary" id="review-cancel-btn">Back</button>
+              <button class="btn btn-primary" id="review-confirm-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="5,3 19,12 5,21 5,3"/>
+                </svg>
+                Confirm & Start
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Template Library Modal -->
+        <div class="modal-overlay" id="template-library-modal" style="display:none;">
+          <div class="modal-card modal-card-lg">
+            <div class="modal-header">
+              <h3>Template Library</h3>
+              <button class="modal-close" id="close-template-library">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="template-list" id="template-list"></div>
+              <div class="form-actions" style="margin-top: 16px;">
+                <button class="btn btn-secondary" id="save-current-template-btn">Save Current as Template</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Drafts Modal -->
+        <div class="modal-overlay" id="drafts-modal" style="display:none;">
+          <div class="modal-card modal-card-lg">
+            <div class="modal-header">
+              <h3>Drafts</h3>
+              <button class="modal-close" id="close-drafts-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="draft-list" id="draft-list"></div>
+              <div class="form-actions" style="margin-top: 16px;">
+                <button class="btn btn-primary" id="save-draft-btn">Save Current as Draft</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Campaign History Modal -->
+        <div class="modal-overlay" id="campaign-history-modal" style="display:none;">
+          <div class="modal-card modal-card-lg">
+            <div class="modal-header">
+              <h3>Campaign History</h3>
+              <button class="modal-close" id="close-campaign-history">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="campaign-list" id="campaign-list"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   </div>
