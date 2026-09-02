@@ -11,7 +11,11 @@ from typing import Optional
 if os.environ.get("VERCEL") == "1":
     DB_PATH = Path(os.environ.get("TMPDIR", "/tmp")) / "resumemailer.db"
 else:
-    DB_PATH = Path(__file__).resolve().parent / "resumemailer.db"
+    data_dir = os.environ.get("RESUMEMAILER_DATA_DIR", "")
+    if data_dir:
+        DB_PATH = Path(data_dir) / "resumemailer.db"
+    else:
+        DB_PATH = Path(__file__).resolve().parent / "resumemailer.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sent_emails (

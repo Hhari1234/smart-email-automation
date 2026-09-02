@@ -18,7 +18,11 @@ def _is_vercel() -> bool:
 if _is_vercel():
     SETTINGS_PATH = Path(os.environ.get("TMPDIR", "/tmp")) / "settings.json"
 else:
-    SETTINGS_PATH = BASE_DIR / "settings.json"
+    data_dir = os.environ.get("RESUMEMAILER_DATA_DIR")
+    if data_dir:
+        SETTINGS_PATH = Path(data_dir) / "settings.json"
+    else:
+        SETTINGS_PATH = BASE_DIR / "settings.json"
 
 load_dotenv(ENV_PATH)
 

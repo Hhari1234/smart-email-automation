@@ -162,8 +162,13 @@ def _runtime_dir(name: str) -> Path:
     target.mkdir(parents=True, exist_ok=True)
     return target
 
-UPLOADS_DIR = _runtime_dir("resumemailer_uploads")
-LOGS_DIR = _runtime_dir("resumemailer_logs")
+data_dir = os.environ.get("RESUMEMAILER_DATA_DIR", "")
+if data_dir:
+    UPLOADS_DIR = Path(data_dir) / "uploads"
+    LOGS_DIR = Path(data_dir) / "logs"
+else:
+    UPLOADS_DIR = _runtime_dir("resumemailer_uploads")
+    LOGS_DIR = _runtime_dir("resumemailer_logs")
 
 # ---------------------------------------------------------------------------
 # Global state (thread-safe for simple reads; writes happen mainly from
@@ -948,6 +953,7 @@ async def start_send(payload: StartSendRequest):
 
     # Build attachments list (resume + extra)
     attachments = list(payload.attachments or [])
+    resume = state.settings.get("resume_path", "")
     resume = state.settings.get("resume_path", "")
     if resume and Path(resume).exists():
         attachments.insert(0, resume)
