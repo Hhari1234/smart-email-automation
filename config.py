@@ -66,6 +66,7 @@ class Settings:
                 pass
 
     def save(self):
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
 

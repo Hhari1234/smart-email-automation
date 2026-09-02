@@ -85,8 +85,26 @@ CREATE TABLE IF NOT EXISTS campaign_recipients (
 
 
 class Database:
-    def __init__(self, db_path: Path = DB_PATH):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[Path] = None):
+        # If db_path is provided, use it (for backward compatibility)
+        if db_path is not None:
+            self.db_path = db_path
+        else:
+            # Calculate database path dynamically based on current environment
+            if os.environ.get("VERCEL") == "1":
+                data_dir = os.environ.get("TMPDIR", "/tmp")
+            else:
+                data_dir = os.environ.get("RESUMEMAILER_DATA_DIR", "")
+                if data_dir:
+                    pass
+                else:
+                    # Use the module file's directory as fallback
+                    data_dir = str(Path(__file__).resolve().parent)
+            
+            self.db_path = Path(data_dir) / "resumemailer.db"
+        
+        # Ensure the parent directory exists before creating the database
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.executescript(SCHEMA)
         self._conn.commit()

@@ -162,10 +162,14 @@ def _runtime_dir(name: str) -> Path:
     target.mkdir(parents=True, exist_ok=True)
     return target
 
+# Ensure data directory exists
 data_dir = os.environ.get("RESUMEMAILER_DATA_DIR", "")
 if data_dir:
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
     UPLOADS_DIR = Path(data_dir) / "uploads"
     LOGS_DIR = Path(data_dir) / "logs"
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
 else:
     UPLOADS_DIR = _runtime_dir("resumemailer_uploads")
     LOGS_DIR = _runtime_dir("resumemailer_logs")
