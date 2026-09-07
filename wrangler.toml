@@ -1,0 +1,23 @@
+# Cloudflare Workers configuration for Smart Email Automation
+name = "smart-email-automation"
+main = "src/worker.py"
+compatibility_date = "2024-09-01"
+compatibility_flags = ["python_workers"]
+
+[site]
+bucket = "./frontend"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "smart-email-automation-db"
+database_id = "YOUR_DATABASE_ID"
+
+# Environment variables
+[vars]
+APP_ENV = "production"
+CLOUDFLARE_WORKER = "1"
+
+# Secrets (set via `wrangler secret put`)
+# Required secrets:
+# - APP_SECRET_KEY: Generate with: python -c "import secrets; print(secrets.token_urlsafe(48))"

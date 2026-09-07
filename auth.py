@@ -288,7 +288,7 @@ def is_auth_disabled() -> bool:
 # ---------------------------------------------------------------------------
 # Login / logout helpers
 # ---------------------------------------------------------------------------
-def attempt_login(username: str, password: str, ip: str) -> tuple[bool, str, Optional[tuple[int, str]]]:
+def attempt_login(username: str, password: str, ip: str, db=None) -> tuple[bool, str, Optional[tuple[int, str]]]:
     """Returns (success, message, session_data). Enforces rate limiting."""
     _ensure_db_initialized()
 
@@ -300,7 +300,8 @@ def attempt_login(username: str, password: str, ip: str) -> tuple[bool, str, Opt
         _rate_limiter.record_failure(ip, username or "")
         return False, "Username and password are required", None
 
-    db = _get_db()
+    if db is None:
+        db = _get_db()
     user = db.get_user_by_username(username)
 
     if not user:
@@ -393,7 +394,7 @@ def validate_password(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-def attempt_register(username: str, password: str, confirm_password: str, ip: str) -> tuple[bool, str, Optional[tuple[int, str]]]:
+def attempt_register(username: str, password: str, confirm_password: str, ip: str, db=None) -> tuple[bool, str, Optional[tuple[int, str]]]:
     """Returns (success, message, session_data). Enforces registration rate limiting."""
     _ensure_db_initialized()
 
@@ -414,7 +415,8 @@ def attempt_register(username: str, password: str, confirm_password: str, ip: st
 
     _registration_limiter.record_registration(ip)
 
-    db = _get_db()
+    if db is None:
+        db = _get_db()
 
     existing = db.get_user_by_username(username.strip())
     if existing:
@@ -424,27 +426,3 @@ def attempt_register(username: str, password: str, confirm_password: str, ip: st
     user_id = db.create_user(username.strip(), password_hash)
 
     return True, "ok", (user_id, username.strip())
-    return {
-        SESSION_COOKIE: {"value": session_value, **common},
-        CSRF_COOKIE: {
-            "value": csrf_value,
-            "path": "/",
-            "httponly": False,  # JS needs to read this for the header
-            "samesite": "lax",
-            "secure": secure,
-        },
-    }
-
-
-def clear_auth_cookies() -> dict[str, str]:
-    secure = _env("APP_ENV", "development") == "production"
-    common = {
-        "path": "/",
-        "expires": "Thu, 01 Jan 1970 00:00:00 GMT",
-        "samesite": "lax",
-        "secure": secure,
-    }
-    return {
-        SESSION_COOKIE: {"value": "", "httponly": True, **common},
-        CSRF_COOKIE: {"value": "", "httponly": False, **common},
-    }

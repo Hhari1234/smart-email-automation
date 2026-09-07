@@ -552,7 +552,7 @@ def _set_cookie(response: Response, name: str, value: str, **kwargs):
 async def login(payload: LoginRequest, request: Request):
     ip = client_ip(request)
 
-    success, message, session_data = attempt_login(payload.username, payload.password, ip)
+    success, message, session_data = attempt_login(payload.username, payload.password, ip, db)
     if not success:
         status_code = 429 if "Too many" in message else 401
         raise HTTPException(status_code=status_code, detail=message)
@@ -572,7 +572,7 @@ async def register(payload: RegisterRequest, request: Request):
     ip = client_ip(request)
 
     success, message, session_data = attempt_register(
-        payload.username, payload.password, payload.confirm_password, ip
+        payload.username, payload.password, payload.confirm_password, ip, db
     )
     if not success:
         status_code = 429 if "Too many" in message else 400
