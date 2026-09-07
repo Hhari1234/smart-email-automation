@@ -1,7 +1,7 @@
 # Cloudflare Workers configuration for Smart Email Automation
 name = "smart-email-automation"
 main = "src/worker.py"
-compatibility_date = "2024-09-01"
+compatibility_date = "2026-09-07"
 compatibility_flags = ["python_workers"]
 
 # Static Assets - serves frontend files, Worker handles API routes first
