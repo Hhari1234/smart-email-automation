@@ -1,5 +1,6 @@
 """
 Cloudflare Python Worker for Smart Email Automation.
+v2 - with assets binding and run_worker_first
 
 This module serves the FastAPI application on Cloudflare Workers with:
 - D1 database for persistence
