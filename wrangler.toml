@@ -11,7 +11,7 @@ bucket = "./frontend"
 [[d1_databases]]
 binding = "DB"
 database_name = "smart-email-automation-db"
-database_id = "YOUR_DATABASE_ID"
+database_id = "2b92f6be-539d-4f57-a277-251ca2a04a3e"
 
 # Environment variables
 [vars]
