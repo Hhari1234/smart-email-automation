@@ -17,7 +17,7 @@ from typing import Optional
 os.environ["CLOUDFLARE_WORKER"] = "1"
 os.environ["APP_ENV"] = "production"
 
-from workers import WorkerEntrypoint
+from workers import WorkerEntrypoint, Response
 import asgi
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -369,6 +369,23 @@ def create_app() -> FastAPI:
             "recipients_count": 0,
             "valid_emails": 0,
         }
+
+    @app.get("/{path:path}")
+    async def serve_frontend(path: str, request: Request):
+        env = request.scope["env"]
+        if path == "" or path == "/":
+            path = "index.html"
+        elif path == "login":
+            path = "login.html"
+        asset_url = f"https://assets.local/{path}"
+        resp = await env.ASSETS.fetch(asset_url)
+        body = await resp.bytes()
+        headers = dict(resp.headers)
+        return Response(
+            content=body,
+            status_code=resp.status,
+            headers=headers
+        )
 
     return app
 

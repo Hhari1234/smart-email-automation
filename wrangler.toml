@@ -4,8 +4,10 @@ main = "src/worker.py"
 compatibility_date = "2024-09-01"
 compatibility_flags = ["python_workers"]
 
-[site]
-bucket = "./frontend"
+# Static Assets - serves frontend files, Worker handles API routes first
+[assets]
+directory = "./frontend"
+binding = "ASSETS"
 
 # D1 Database binding
 [[d1_databases]]
@@ -17,7 +19,3 @@ database_id = "2b92f6be-539d-4f57-a277-251ca2a04a3e"
 [vars]
 APP_ENV = "production"
 CLOUDFLARE_WORKER = "1"
-
-# Secrets (set via `wrangler secret put`)
-# Required secrets:
-# - APP_SECRET_KEY: Generate with: python -c "import secrets; print(secrets.token_urlsafe(48))"
