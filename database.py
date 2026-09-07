@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS sent_emails (
 
 CREATE TABLE IF NOT EXISTS templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     subject TEXT NOT NULL,
     body TEXT NOT NULL,
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS templates (
 
 CREATE TABLE IF NOT EXISTS drafts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
     name TEXT,
     subject TEXT NOT NULL,
     body TEXT NOT NULL,
@@ -54,6 +56,7 @@ CREATE TABLE IF NOT EXISTS drafts (
 
 CREATE TABLE IF NOT EXISTS campaigns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
     subject TEXT NOT NULL,
     body TEXT NOT NULL,
     signature TEXT NOT NULL,
@@ -81,16 +84,24 @@ CREATE TABLE IF NOT EXISTS campaign_recipients (
     timestamp TEXT,
     FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    last_login_at TEXT NULL
+);
 """
 
 
 class Database:
     def __init__(self, db_path: Optional[Path] = None):
-        # If db_path is provided, use it (for backward compatibility)
         if db_path is not None:
             self.db_path = db_path
         else:
-            # Calculate database path dynamically based on current environment
             if os.environ.get("VERCEL") == "1":
                 data_dir = os.environ.get("TMPDIR", "/tmp")
             else:
@@ -98,16 +109,15 @@ class Database:
                 if data_dir:
                     pass
                 else:
-                    # Use the module file's directory as fallback
                     data_dir = str(Path(__file__).resolve().parent)
-            
+
             self.db_path = Path(data_dir) / "resumemailer.db"
-        
-        # Ensure the parent directory exists before creating the database
+
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.executescript(SCHEMA)
         self._conn.commit()
+        self._migrate_add_user_id()
 
     def is_already_sent(self, email: str) -> bool:
         cur = self._conn.execute(
@@ -163,56 +173,79 @@ class Database:
     # ------------------------------------------------------------------
     # Templates
     # ------------------------------------------------------------------
-    def create_template(self, name: str, subject: str, body: str, signature: str) -> int:
+    def create_template(self, name: str, subject: str, body: str, signature: str, user_id: int) -> int:
         now = datetime.now().isoformat(timespec="seconds")
         cur = self._conn.execute(
-            "INSERT INTO templates (name, subject, body, signature, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, subject, body, signature, now, now),
+            "INSERT INTO templates (user_id, name, subject, body, signature, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, name, subject, body, signature, now, now),
         )
         self._conn.commit()
         return cur.lastrowid
 
-    def list_templates(self):
-        cur = self._conn.execute(
-            "SELECT id, name, subject, body, signature, created_at, updated_at FROM templates ORDER BY updated_at DESC"
-        )
-        cols = ["id", "name", "subject", "body", "signature", "created_at", "updated_at"]
+    def list_templates(self, user_id: Optional[int] = None):
+        if user_id is not None:
+            cur = self._conn.execute(
+                "SELECT id, user_id, name, subject, body, signature, created_at, updated_at FROM templates WHERE user_id = ? ORDER BY updated_at DESC",
+                (user_id,)
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT id, user_id, name, subject, body, signature, created_at, updated_at FROM templates ORDER BY updated_at DESC"
+            )
+        cols = ["id", "user_id", "name", "subject", "body", "signature", "created_at", "updated_at"]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
-    def get_template(self, template_id: int):
-        cur = self._conn.execute(
-            "SELECT id, name, subject, body, signature, created_at, updated_at FROM templates WHERE id = ?",
-            (template_id,),
-        )
+    def get_template(self, template_id: int, user_id: Optional[int] = None):
+        if user_id is not None:
+            cur = self._conn.execute(
+                "SELECT id, user_id, name, subject, body, signature, created_at, updated_at FROM templates WHERE id = ? AND user_id = ?",
+                (template_id, user_id),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT id, user_id, name, subject, body, signature, created_at, updated_at FROM templates WHERE id = ?",
+                (template_id,),
+            )
         row = cur.fetchone()
         if not row:
             return None
-        cols = ["id", "name", "subject", "body", "signature", "created_at", "updated_at"]
+        cols = ["id", "user_id", "name", "subject", "body", "signature", "created_at", "updated_at"]
         return dict(zip(cols, row))
 
-    def update_template(self, template_id: int, name: str, subject: str, body: str, signature: str):
+    def update_template(self, template_id: int, name: str, subject: str, body: str, signature: str, user_id: Optional[int] = None) -> bool:
         now = datetime.now().isoformat(timespec="seconds")
-        self._conn.execute(
-            "UPDATE templates SET name=?, subject=?, body=?, signature=?, updated_at=? WHERE id=?",
-            (name, subject, body, signature, now, template_id),
-        )
+        if user_id is not None:
+            cursor = self._conn.execute(
+                "UPDATE templates SET name=?, subject=?, body=?, signature=?, updated_at=? WHERE id=? AND user_id=?",
+                (name, subject, body, signature, now, template_id, user_id),
+            )
+        else:
+            cursor = self._conn.execute(
+                "UPDATE templates SET name=?, subject=?, body=?, signature=?, updated_at=? WHERE id=?",
+                (name, subject, body, signature, now, template_id),
+            )
         self._conn.commit()
+        return cursor.rowcount > 0
 
-    def delete_template(self, template_id: int):
-        self._conn.execute("DELETE FROM templates WHERE id=?", (template_id,))
+    def delete_template(self, template_id: int, user_id: Optional[int] = None) -> bool:
+        if user_id is not None:
+            cursor = self._conn.execute("DELETE FROM templates WHERE id=? AND user_id=?", (template_id, user_id))
+        else:
+            cursor = self._conn.execute("DELETE FROM templates WHERE id=?", (template_id,))
         self._conn.commit()
+        return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
     # Drafts
     # ------------------------------------------------------------------
     def create_draft(self, name: str, subject: str, body: str, signature: str,
-                     recipients: list[dict], attachments: list[str], settings: dict) -> int:
+                      recipients: list[dict], attachments: list[str], settings: dict, user_id: int) -> int:
         import json
         now = datetime.now().isoformat(timespec="seconds")
         cur = self._conn.execute(
-            "INSERT INTO drafts (name, subject, body, signature, recipients_json, attachments_json, settings_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO drafts (user_id, name, subject, body, signature, recipients_json, attachments_json, settings_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                name, subject, body, signature,
+                user_id, name, subject, body, signature,
                 json.dumps(recipients), json.dumps(attachments), json.dumps(settings),
                 now, now,
             ),
@@ -220,12 +253,18 @@ class Database:
         self._conn.commit()
         return cur.lastrowid
 
-    def list_drafts(self):
+    def list_drafts(self, user_id: Optional[int] = None):
         import json
-        cur = self._conn.execute(
-            "SELECT id, name, subject, body, signature, recipients_json, attachments_json, settings_json, created_at, updated_at FROM drafts ORDER BY updated_at DESC"
-        )
-        cols = ["id", "name", "subject", "body", "signature", "recipients_json", "attachments_json", "settings_json", "created_at", "updated_at"]
+        if user_id is not None:
+            cur = self._conn.execute(
+                "SELECT id, user_id, name, subject, body, signature, recipients_json, attachments_json, settings_json, created_at, updated_at FROM drafts WHERE user_id = ? ORDER BY updated_at DESC",
+                (user_id,)
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT id, user_id, name, subject, body, signature, recipients_json, attachments_json, settings_json, created_at, updated_at FROM drafts ORDER BY updated_at DESC"
+            )
+        cols = ["id", "user_id", "name", "subject", "body", "signature", "recipients_json", "attachments_json", "settings_json", "created_at", "updated_at"]
         rows = []
         for row in cur.fetchall():
             d = dict(zip(cols, row))
@@ -235,16 +274,22 @@ class Database:
             rows.append(d)
         return rows
 
-    def get_draft(self, draft_id: int):
+    def get_draft(self, draft_id: int, user_id: Optional[int] = None):
         import json
-        cur = self._conn.execute(
-            "SELECT id, name, subject, body, signature, recipients_json, attachments_json, settings_json, created_at, updated_at FROM drafts WHERE id = ?",
-            (draft_id,),
-        )
+        if user_id is not None:
+            cur = self._conn.execute(
+                "SELECT id, user_id, name, subject, body, signature, recipients_json, attachments_json, settings_json, created_at, updated_at FROM drafts WHERE id = ? AND user_id = ?",
+                (draft_id, user_id),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT id, user_id, name, subject, body, signature, recipients_json, attachments_json, settings_json, created_at, updated_at FROM drafts WHERE id = ?",
+                (draft_id,),
+            )
         row = cur.fetchone()
         if not row:
             return None
-        cols = ["id", "name", "subject", "body", "signature", "recipients_json", "attachments_json", "settings_json", "created_at", "updated_at"]
+        cols = ["id", "user_id", "name", "subject", "body", "signature", "recipients_json", "attachments_json", "settings_json", "created_at", "updated_at"]
         d = dict(zip(cols, row))
         d["recipients"] = json.loads(d.pop("recipients_json", "[]") or "[]")
         d["attachments"] = json.loads(d.pop("attachments_json", "[]") or "[]")
@@ -252,39 +297,55 @@ class Database:
         return d
 
     def update_draft(self, draft_id: int, name: str, subject: str, body: str, signature: str,
-                     recipients: list[dict], attachments: list[str], settings: dict):
+                     recipients: list[dict], attachments: list[str], settings: dict, user_id: Optional[int] = None):
         import json
         now = datetime.now().isoformat(timespec="seconds")
-        self._conn.execute(
-            "UPDATE drafts SET name=?, subject=?, body=?, signature=?, recipients_json=?, attachments_json=?, settings_json=?, updated_at=? WHERE id=?",
-            (name, subject, body, signature, json.dumps(recipients), json.dumps(attachments), json.dumps(settings), now, draft_id),
-        )
+        if user_id is not None:
+            self._conn.execute(
+                "UPDATE drafts SET name=?, subject=?, body=?, signature=?, recipients_json=?, attachments_json=?, settings_json=?, updated_at=? WHERE id=? AND user_id=?",
+                (name, subject, body, signature, json.dumps(recipients), json.dumps(attachments), json.dumps(settings), now, draft_id, user_id),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE drafts SET name=?, subject=?, body=?, signature=?, recipients_json=?, attachments_json=?, settings_json=?, updated_at=? WHERE id=?",
+                (name, subject, body, signature, json.dumps(recipients), json.dumps(attachments), json.dumps(settings), now, draft_id),
+            )
         self._conn.commit()
 
-    def delete_draft(self, draft_id: int):
-        self._conn.execute("DELETE FROM drafts WHERE id=?", (draft_id,))
+    def delete_draft(self, draft_id: int, user_id: Optional[int] = None) -> bool:
+        if user_id is not None:
+            cursor = self._conn.execute("DELETE FROM drafts WHERE id=? AND user_id=?", (draft_id, user_id))
+        else:
+            cursor = self._conn.execute("DELETE FROM drafts WHERE id=?", (draft_id,))
         self._conn.commit()
+        return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
     # Campaigns
     # ------------------------------------------------------------------
     def create_campaign(self, subject: str, body: str, signature: str,
-                        attachments: list[str], settings: dict) -> int:
+                        attachments: list[str], settings: dict, user_id: int) -> int:
         import json
         now = datetime.now().isoformat(timespec="seconds")
         cur = self._conn.execute(
-            "INSERT INTO campaigns (subject, body, signature, attachments_json, settings_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (subject, body, signature, json.dumps(attachments), json.dumps(settings), "draft", now, now),
+            "INSERT INTO campaigns (user_id, subject, body, signature, attachments_json, settings_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, subject, body, signature, json.dumps(attachments), json.dumps(settings), "draft", now, now),
         )
         self._conn.commit()
         return cur.lastrowid
 
-    def list_campaigns(self):
+    def list_campaigns(self, user_id: Optional[int] = None):
         import json
-        cur = self._conn.execute(
-            "SELECT id, subject, body, signature, attachments_json, settings_json, total_recipients, sent_count, failed_count, skipped_count, status, created_at, updated_at FROM campaigns ORDER BY updated_at DESC"
-        )
-        cols = ["id", "subject", "body", "signature", "attachments_json", "settings_json",
+        if user_id is not None:
+            cur = self._conn.execute(
+                "SELECT id, user_id, subject, body, signature, attachments_json, settings_json, total_recipients, sent_count, failed_count, skipped_count, status, created_at, updated_at FROM campaigns WHERE user_id = ? ORDER BY updated_at DESC",
+                (user_id,)
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT id, user_id, subject, body, signature, attachments_json, settings_json, total_recipients, sent_count, failed_count, skipped_count, status, created_at, updated_at FROM campaigns ORDER BY updated_at DESC"
+            )
+        cols = ["id", "user_id", "subject", "body", "signature", "attachments_json", "settings_json",
                 "total_recipients", "sent_count", "failed_count", "skipped_count", "status", "created_at", "updated_at"]
         rows = []
         for row in cur.fetchall():
@@ -294,23 +355,29 @@ class Database:
             rows.append(d)
         return rows
 
-    def get_campaign(self, campaign_id: int):
+    def get_campaign(self, campaign_id: int, user_id: Optional[int] = None):
         import json
-        cur = self._conn.execute(
-            "SELECT id, subject, body, signature, attachments_json, settings_json, total_recipients, sent_count, failed_count, skipped_count, status, created_at, updated_at FROM campaigns WHERE id = ?",
-            (campaign_id,),
-        )
+        if user_id is not None:
+            cur = self._conn.execute(
+                "SELECT id, user_id, subject, body, signature, attachments_json, settings_json, total_recipients, sent_count, failed_count, skipped_count, status, created_at, updated_at FROM campaigns WHERE id = ? AND user_id = ?",
+                (campaign_id, user_id),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT id, user_id, subject, body, signature, attachments_json, settings_json, total_recipients, sent_count, failed_count, skipped_count, status, created_at, updated_at FROM campaigns WHERE id = ?",
+                (campaign_id,),
+            )
         row = cur.fetchone()
         if not row:
             return None
-        cols = ["id", "subject", "body", "signature", "attachments_json", "settings_json",
+        cols = ["id", "user_id", "subject", "body", "signature", "attachments_json", "settings_json",
                 "total_recipients", "sent_count", "failed_count", "skipped_count", "status", "created_at", "updated_at"]
         d = dict(zip(cols, row))
         d["attachments"] = json.loads(d.pop("attachments_json", "[]") or "[]")
         d["settings"] = json.loads(d.pop("settings_json", "{}") or "{}")
         return d
 
-    def update_campaign(self, campaign_id: int, **kwargs):
+    def update_campaign(self, campaign_id: int, user_id: Optional[int] = None, **kwargs):
         import json
         allowed = {"subject", "body", "signature", "attachments", "settings",
                    "total_recipients", "sent_count", "failed_count", "skipped_count", "status"}
@@ -327,16 +394,27 @@ class Database:
             return
         values.append(datetime.now().isoformat(timespec="seconds"))
         values.append(campaign_id)
-        self._conn.execute(
-            f"UPDATE campaigns SET {', '.join(sets)}, updated_at=? WHERE id=?",
-            values,
-        )
+        if user_id is not None:
+            self._conn.execute(
+                f"UPDATE campaigns SET {', '.join(sets)}, updated_at=? WHERE id=? AND user_id=?",
+                values + [user_id],
+            )
+        else:
+            self._conn.execute(
+                f"UPDATE campaigns SET {', '.join(sets)}, updated_at=? WHERE id=?",
+                values,
+            )
         self._conn.commit()
 
-    def delete_campaign(self, campaign_id: int):
-        self._conn.execute("DELETE FROM campaign_recipients WHERE campaign_id=?", (campaign_id,))
-        self._conn.execute("DELETE FROM campaigns WHERE id=?", (campaign_id,))
+    def delete_campaign(self, campaign_id: int, user_id: Optional[int] = None) -> bool:
+        if user_id is not None:
+            self._conn.execute("DELETE FROM campaign_recipients WHERE campaign_id IN (SELECT id FROM campaigns WHERE campaign_id=? AND user_id=?)", (campaign_id, user_id))
+            cursor = self._conn.execute("DELETE FROM campaigns WHERE id=? AND user_id=?", (campaign_id, user_id))
+        else:
+            self._conn.execute("DELETE FROM campaign_recipients WHERE campaign_id=?", (campaign_id,))
+            cursor = self._conn.execute("DELETE FROM campaigns WHERE id=?", (campaign_id,))
         self._conn.commit()
+        return cursor.rowcount > 0
 
     def add_campaign_recipients(self, campaign_id: int, recipients: list[dict]):
         import json
@@ -370,5 +448,92 @@ class Database:
         cols = ["email", "hr_name", "company", "job_role", "location", "status", "error", "timestamp"]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
+    def _migrate_add_user_id(self):
+        try:
+            cursor = self._conn.execute("PRAGMA table_info(templates)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'user_id' not in columns:
+                self._conn.execute("ALTER TABLE templates ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
+                self._conn.commit()
+
+            cursor = self._conn.execute("PRAGMA table_info(drafts)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'user_id' not in columns:
+                self._conn.execute("ALTER TABLE drafts ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
+                self._conn.commit()
+
+            cursor = self._conn.execute("PRAGMA table_info(campaigns)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'user_id' not in columns:
+                self._conn.execute("ALTER TABLE campaigns ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
+                self._conn.commit()
+
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_templates_user_id ON templates(user_id)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_drafts_user_id ON drafts(user_id)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_campaigns_user_id ON campaigns(user_id)")
+            self._conn.commit()
+        except Exception:
+            pass
+
     def close(self):
         self._conn.close()
+
+    # ------------------------------------------------------------------
+    # Users
+    # ------------------------------------------------------------------
+    def create_user(self, username: str, password_hash: str) -> int:
+        now = datetime.now().isoformat(timespec="seconds")
+        cur = self._conn.execute(
+            "INSERT INTO users (username, password_hash, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?)",
+            (username, password_hash, now, now, 1),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_user_by_username(self, username: str):
+        cur = self._conn.execute(
+            "SELECT id, username, password_hash, created_at, updated_at, is_active, last_login_at FROM users WHERE username = ?",
+            (username,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = ["id", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
+        return dict(zip(cols, row))
+
+    def get_user_by_id(self, user_id: int):
+        cur = self._conn.execute(
+            "SELECT id, username, password_hash, created_at, updated_at, is_active, last_login_at FROM users WHERE id = ?",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = ["id", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
+        return dict(zip(cols, row))
+
+    def update_last_login(self, user_id: int):
+        now = datetime.now().isoformat(timespec="seconds")
+        self._conn.execute(
+            "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, user_id),
+        )
+        self._conn.commit()
+
+    def user_exists(self) -> bool:
+        cur = self._conn.execute("SELECT 1 FROM users LIMIT 1")
+        return cur.fetchone() is not None
+
+    def count_users(self) -> int:
+        cur = self._conn.execute("SELECT COUNT(*) FROM users")
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+    def migrate_legacy_user(self, username: str, password_hash: str) -> int:
+        now = datetime.now().isoformat(timespec="seconds")
+        cur = self._conn.execute(
+            "INSERT INTO users (username, password_hash, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?)",
+            (username, password_hash, now, now, 1),
+        )
+        self._conn.commit()
+        return cur.lastrowid

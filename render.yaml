@@ -8,7 +8,7 @@
 
 services:
   - type: web
-    name: resumemailer
+    name: smart-email-automation
     region: oregon
     runtime: python
     plan: starter
@@ -28,18 +28,17 @@ services:
       - key: APP_ENV
         value: production
 
-      - key: APP_USERNAME
-        value: admin
-
-      - key: APP_PASSWORD_HASH
-        sync: false
-
+      # REQUIRED: Generate with: python -c "import secrets; print(secrets.token_urlsafe(48))"
       - key: APP_SECRET_KEY
-        sync: false
+        generateValue: true
 
       - key: APP_SESSION_HOURS
         value: "12"
 
+      - key: RESUMEMAILER_DATA_DIR
+        value: /var/data
+
+      # Optional: SMTP configuration for email sending
       - key: SMTP_EMAIL
         sync: false
 
@@ -51,6 +50,3 @@ services:
 
       - key: GMAIL_TOKEN_FILE
         sync: false
-
-      - key: RESUMEMAILER_DATA_DIR
-        value: /var/data

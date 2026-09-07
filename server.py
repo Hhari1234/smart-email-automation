@@ -24,6 +24,7 @@ from auth import (
     require_auth,
     require_csrf,
     attempt_login,
+    attempt_register,
     client_ip,
     build_auth_cookies,
     clear_auth_cookies,
@@ -56,20 +57,18 @@ if not logger.handlers:
 APP_ENV = os.environ.get("APP_ENV", "development").lower()
 IS_PRODUCTION = APP_ENV == "production"
 
-if is_auth_disabled() and IS_PRODUCTION:
+APP_SECRET_KEY = os.environ.get("APP_SECRET_KEY", "")
+if not APP_SECRET_KEY and IS_PRODUCTION:
     logger.warning(
-        "Authentication is DISABLED (no APP_USERNAME/APP_PASSWORD_HASH/APP_SECRET_KEY set). "
-        "Refusing to start in production."
+        "APP_SECRET_KEY is not set. Refusing to start in production without it."
     )
     raise SystemExit(
-        "Refusing to start: APP_USERNAME, APP_PASSWORD_HASH and APP_SECRET_KEY must be set "
-        "when APP_ENV=production."
+        "Refusing to start: APP_SECRET_KEY must be set when APP_ENV=production."
     )
 
-if is_auth_disabled():
+if not APP_SECRET_KEY:
     logger.warning(
-        "Authentication is DISABLED. Set APP_USERNAME, APP_PASSWORD_HASH and APP_SECRET_KEY "
-        "in your .env to require login."
+        "APP_SECRET_KEY is not set. Using a development secret for session signing."
     )
 
 app = FastAPI(title="ResumeMailer API", version="1.0.0")
@@ -516,11 +515,19 @@ async def health():
 
 @app.get("/api/auth/status")
 async def auth_status(request: Request):
-    user = auth.get_session_user(request)
+    session = auth.get_session_user(request)
+    if session:
+        return {
+            "authenticated": True,
+            "username": session[1],
+            "user_id": session[0],
+            "auth_enabled": True,
+        }
     return {
-        "authenticated": bool(user),
-        "username": user,
-        "auth_enabled": not is_auth_disabled(),
+        "authenticated": False,
+        "username": None,
+        "user_id": None,
+        "auth_enabled": True,
     }
 
 
@@ -531,6 +538,11 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    confirm_password: str
+
 
 def _set_cookie(response: Response, name: str, value: str, **kwargs):
     response.set_cookie(key=name, value=value, **kwargs)
@@ -539,17 +551,36 @@ def _set_cookie(response: Response, name: str, value: str, **kwargs):
 @app.post("/api/auth/login")
 async def login(payload: LoginRequest, request: Request):
     ip = client_ip(request)
-    if is_auth_disabled():
-        return {"status": "ok", "auth_disabled": True}
 
-    success, message = attempt_login(payload.username, payload.password, ip)
+    success, message, session_data = attempt_login(payload.username, payload.password, ip)
     if not success:
-        # 401 for invalid credentials, 429 for rate-limited.
         status_code = 429 if "Too many" in message else 401
         raise HTTPException(status_code=status_code, detail=message)
 
-    cookies = build_auth_cookies(payload.username)
-    response = JSONResponse({"status": "ok", "username": payload.username})
+    user_id, username = session_data
+    cookies = build_auth_cookies(user_id, username)
+    response = JSONResponse({"status": "ok", "username": username})
+    for name, cfg in cookies.items():
+        _set_cookie(response, name, cfg["value"], **{
+            k: v for k, v in cfg.items() if k != "value"
+        })
+    return response
+
+
+@app.post("/api/auth/register")
+async def register(payload: RegisterRequest, request: Request):
+    ip = client_ip(request)
+
+    success, message, session_data = attempt_register(
+        payload.username, payload.password, payload.confirm_password, ip
+    )
+    if not success:
+        status_code = 429 if "Too many" in message else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+    user_id, username = session_data
+    cookies = build_auth_cookies(user_id, username)
+    response = JSONResponse({"status": "ok", "username": username})
     for name, cfg in cookies.items():
         _set_cookie(response, name, cfg["value"], **{
             k: v for k, v in cfg.items() if k != "value"
@@ -567,17 +598,26 @@ async def logout(request: Request, response: Response):
     return {"status": "ok"}
 
 
+@app.get("/api/auth/me")
+async def get_current_user(request: Request):
+    session = auth.get_session_user(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"user_id": session[0], "username": session[1]}
+
+
 # ---------------------------------------------------------------------------
 # Authorization helpers for protected endpoints
 # ---------------------------------------------------------------------------
-def _auth_and_csrf_dep(request: Request, _user: str = Depends(require_auth)) -> None:
+def _auth_and_csrf_dep(request: Request, _session: tuple = Depends(require_auth)) -> tuple:
     """For state-changing routes: require auth, then verify CSRF."""
     require_csrf(request)
+    return _session
 
 
-def _read_dep(_user: str = Depends(require_auth)) -> str:
+def _read_dep(_session: tuple = Depends(require_auth)) -> tuple:
     """For read-only routes: require auth only."""
-    return _user
+    return _session
 
 @app.get("/api/state", dependencies=[Depends(_read_dep)])
 async def get_state():
@@ -708,29 +748,36 @@ async def get_recipients():
 # Routes: Template
 # ---------------------------------------------------------------------------
 @app.get("/api/templates", dependencies=[Depends(_read_dep)])
-async def list_templates():
-    return {"templates": db.list_templates()}
+async def list_templates(_session: tuple = Depends(_read_dep)):
+    user_id = _session[0]
+    return {"templates": db.list_templates(user_id)}
 
 @app.post("/api/templates", dependencies=[Depends(_auth_and_csrf_dep)])
-async def create_template(payload: TemplateCreateRequest):
-    tid = db.create_template(payload.name, payload.subject, payload.body, payload.signature)
+async def create_template(payload: TemplateCreateRequest, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
+    tid = db.create_template(payload.name, payload.subject, payload.body, payload.signature, user_id)
     return {"id": tid, "status": "saved"}
 
 @app.get("/api/templates/{template_id}", dependencies=[Depends(_read_dep)])
-async def get_template(template_id: int):
-    tpl = db.get_template(template_id)
+async def get_template(template_id: int, _session: tuple = Depends(_read_dep)):
+    user_id = _session[0]
+    tpl = db.get_template(template_id, user_id)
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")
     return tpl
 
 @app.put("/api/templates/{template_id}", dependencies=[Depends(_auth_and_csrf_dep)])
-async def update_template(template_id: int, payload: TemplateCreateRequest):
-    db.update_template(template_id, payload.name, payload.subject, payload.body, payload.signature)
+async def update_template(template_id: int, payload: TemplateCreateRequest, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
+    if not db.update_template(template_id, payload.name, payload.subject, payload.body, payload.signature, user_id):
+        raise HTTPException(status_code=404, detail="Template not found")
     return {"status": "updated"}
 
 @app.delete("/api/templates/{template_id}", dependencies=[Depends(_auth_and_csrf_dep)])
-async def delete_template(template_id: int):
-    db.delete_template(template_id)
+async def delete_template(template_id: int, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
+    if not db.delete_template(template_id, user_id):
+        raise HTTPException(status_code=404, detail="Template not found")
     return {"status": "deleted"}
 
 @app.post("/api/template/preview", dependencies=[Depends(_auth_and_csrf_dep)])
@@ -749,75 +796,95 @@ async def preview_email(payload: PreviewRequest):
 # Routes: Drafts
 # ---------------------------------------------------------------------------
 @app.get("/api/drafts", dependencies=[Depends(_read_dep)])
-async def list_drafts():
-    return {"drafts": db.list_drafts()}
+async def list_drafts(_session: tuple = Depends(_read_dep)):
+    user_id = _session[0]
+    return {"drafts": db.list_drafts(user_id)}
 
 @app.post("/api/drafts", dependencies=[Depends(_auth_and_csrf_dep)])
-async def create_draft(payload: DraftCreateRequest):
+async def create_draft(payload: DraftCreateRequest, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
     did = db.create_draft(
         payload.name, payload.subject, payload.body, payload.signature,
-        payload.recipients, payload.attachments, payload.settings,
+        payload.recipients, payload.attachments, payload.settings, user_id,
     )
     return {"id": did, "status": "saved"}
 
 @app.get("/api/drafts/{draft_id}", dependencies=[Depends(_read_dep)])
-async def get_draft(draft_id: int):
-    d = db.get_draft(draft_id)
+async def get_draft(draft_id: int, _session: tuple = Depends(_read_dep)):
+    user_id = _session[0]
+    d = db.get_draft(draft_id, user_id)
     if not d:
         raise HTTPException(status_code=404, detail="Draft not found")
     return d
 
 @app.put("/api/drafts/{draft_id}", dependencies=[Depends(_auth_and_csrf_dep)])
-async def update_draft(draft_id: int, payload: DraftCreateRequest):
-    db.update_draft(
+async def update_draft(draft_id: int, payload: DraftCreateRequest, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
+    if not db.update_draft(
         draft_id, payload.name, payload.subject, payload.body, payload.signature,
-        payload.recipients, payload.attachments, payload.settings,
-    )
+        payload.recipients, payload.attachments, payload.settings, user_id,
+    ):
+        raise HTTPException(status_code=404, detail="Draft not found")
     return {"status": "updated"}
 
 @app.delete("/api/drafts/{draft_id}", dependencies=[Depends(_auth_and_csrf_dep)])
-async def delete_draft(draft_id: int):
-    db.delete_draft(draft_id)
+async def delete_draft(draft_id: int, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
+    if not db.delete_draft(draft_id, user_id):
+        raise HTTPException(status_code=404, detail="Draft not found")
     return {"status": "deleted"}
 
 # ---------------------------------------------------------------------------
 # Routes: Campaigns
 # ---------------------------------------------------------------------------
 @app.get("/api/campaigns", dependencies=[Depends(_read_dep)])
-async def list_campaigns():
-    return {"campaigns": db.list_campaigns()}
+async def list_campaigns(_session: tuple = Depends(_read_dep)):
+    user_id = _session[0]
+    return {"campaigns": db.list_campaigns(user_id)}
 
 @app.post("/api/campaigns", dependencies=[Depends(_auth_and_csrf_dep)])
-async def create_campaign(payload: CampaignCreateRequest):
+async def create_campaign(payload: CampaignCreateRequest, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
     cid = db.create_campaign(
-        payload.subject, payload.body, payload.signature, payload.attachments, payload.settings,
+        payload.subject, payload.body, payload.signature, payload.attachments, payload.settings, user_id,
     )
     return {"id": cid, "status": "created"}
 
 @app.get("/api/campaigns/{campaign_id}", dependencies=[Depends(_read_dep)])
-async def get_campaign(campaign_id: int):
-    c = db.get_campaign(campaign_id)
+async def get_campaign(campaign_id: int, _session: tuple = Depends(_read_dep)):
+    user_id = _session[0]
+    c = db.get_campaign(campaign_id, user_id)
     if not c:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return c
 
 @app.delete("/api/campaigns/{campaign_id}", dependencies=[Depends(_auth_and_csrf_dep)])
-async def delete_campaign(campaign_id: int):
-    db.delete_campaign(campaign_id)
+async def delete_campaign(campaign_id: int, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
+    if not db.delete_campaign(campaign_id, user_id):
+        raise HTTPException(status_code=404, detail="Campaign not found")
     return {"status": "deleted"}
 
 @app.get("/api/campaigns/{campaign_id}/recipients", dependencies=[Depends(_read_dep)])
-async def get_campaign_recipients(campaign_id: int, status: Optional[str] = Query(None)):
+async def get_campaign_recipients(campaign_id: int, status: Optional[str] = Query(None), _session: tuple = Depends(_read_dep)):
+    user_id = _session[0]
+    c = db.get_campaign(campaign_id, user_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     rows = db.get_campaign_recipients(campaign_id, status_filter=status)
     return {"recipients": rows}
 
 @app.post("/api/campaigns/{campaign_id}/recipients", dependencies=[Depends(_auth_and_csrf_dep)])
-async def add_campaign_recipients(campaign_id: int, payload: dict):
+async def add_campaign_recipients(campaign_id: int, payload: dict, _session: tuple = Depends(_auth_and_csrf_dep)):
+    user_id = _session[0]
+    c = db.get_campaign(campaign_id, user_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     recipients = payload.get("recipients", [])
     db.add_campaign_recipients(campaign_id, recipients)
-    c = db.get_campaign(campaign_id)
+    c = db.get_campaign(campaign_id, user_id)
     if c:
-        db.update_campaign(campaign_id, total_recipients=len(c.get("settings", {}).get("recipients", [])) + len(recipients))
+        db.update_campaign(campaign_id, user_id, total_recipients=len(c.get("settings", {}).get("recipients", [])) + len(recipients))
     return {"status": "added", "count": len(recipients)}
 
 # ---------------------------------------------------------------------------

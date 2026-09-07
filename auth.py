@@ -1,24 +1,25 @@
 """
 auth.py
-Lightweight single-user authentication for ResumeMailer.
+Multi-user authentication for ResumeMailer.
 
 Features:
 - Bcrypt password hashing
 - Signed, server-side session cookies (itsdangerous)
 - CSRF token bound to the session
 - In-memory per-IP and per-username rate limiting for login attempts
+- Registration rate limiting
 - Session fixation protection (new session id on login)
 - Reasonable session expiration
+- SQLite-backed user storage with migration path for legacy env-based auth
 
 Configuration is via environment variables (.env file is fine):
-    APP_USERNAME       -- the login username
-    APP_PASSWORD_HASH  -- bcrypt hash of the password
     APP_SECRET_KEY     -- long random string used to sign session cookies
     APP_ENV            -- "development" or "production"
     APP_SESSION_HOURS  -- optional, default 12
 """
 import hmac
 import os
+import re
 import time
 import threading
 from hashlib import sha256
@@ -38,12 +39,19 @@ def _env(key: str, default: str = "") -> str:
     return val if val is not None else default
 
 
-def _is_configured() -> bool:
-    return bool(
-        _env("APP_USERNAME")
-        and _env("APP_PASSWORD_HASH")
-        and _env("APP_SECRET_KEY")
-    )
+def _is_production() -> bool:
+    return _env("APP_ENV", "development") == "production"
+
+
+def _secret() -> str:
+    secret = _env("APP_SECRET_KEY")
+    if not secret:
+        if _is_production():
+            raise RuntimeError(
+                "APP_SECRET_KEY is not set. Refusing to start in production."
+            )
+        secret = "dev-only-insecure-secret-change-me"
+    return secret
 
 
 # ---------------------------------------------------------------------------
@@ -67,21 +75,49 @@ def verify_password(plaintext: str, hashed: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Database integration
+# ---------------------------------------------------------------------------
+_legacy_migrated = False
+_legacy_migration_lock = threading.Lock()
+
+
+def _get_db():
+    from database import Database
+    return Database()
+
+
+def _migrate_legacy_user():
+    global _legacy_migrated
+    if _legacy_migrated:
+        return
+
+    with _legacy_migration_lock:
+        if _legacy_migrated:
+            return
+
+        db = _get_db()
+        if db.user_exists():
+            _legacy_migrated = True
+            return
+
+        username = _env("APP_USERNAME")
+        password_hash = _env("APP_PASSWORD_HASH")
+
+        if username and password_hash:
+            db.migrate_legacy_user(username, password_hash)
+            _legacy_migrated = True
+
+
+def _ensure_db_initialized():
+    try:
+        _migrate_legacy_user()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Session cookie signing
 # ---------------------------------------------------------------------------
-def _secret() -> str:
-    secret = _env("APP_SECRET_KEY")
-    if not secret:
-        # In development, derive a process-local secret so the app still runs.
-        # In production this should always be set via env.
-        if _env("APP_ENV", "development") == "production":
-            raise RuntimeError(
-                "APP_SECRET_KEY is not set. Refusing to start in production."
-            )
-        secret = "dev-only-insecure-secret-change-me"
-    return secret
-
-
 def _serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(_secret(), salt="resumemailer-session")
 
@@ -93,20 +129,18 @@ SESSION_HEADER = "X-Session-Id"
 SESSION_MAX_AGE_SECONDS = int(_env("APP_SESSION_HOURS", "12")) * 3600
 
 
-def _make_session_payload(username: str) -> str:
-    # Random nonce included so every login produces a fresh session id,
-    # defeating session fixation.
+def _make_session_payload(user_id: int, username: str) -> str:
     nonce = sha256(os.urandom(32)).hexdigest()[:24]
     issued = int(time.time())
-    return f"{username}|{nonce}|{issued}"
+    return f"{user_id}|{username}|{nonce}|{issued}"
 
 
-def create_session_cookie(username: str) -> str:
-    payload = _make_session_payload(username)
+def create_session_cookie(user_id: int, username: str) -> str:
+    payload = _make_session_payload(user_id, username)
     return _serializer().dumps(payload)
 
 
-def read_session_cookie(token: str) -> Optional[str]:
+def read_session_cookie(token: str) -> Optional[tuple[int, str]]:
     if not token:
         return None
     try:
@@ -114,9 +148,14 @@ def read_session_cookie(token: str) -> Optional[str]:
     except (BadSignature, SignatureExpired):
         return None
     parts = data.split("|")
-    if len(parts) < 3:
+    if len(parts) < 4:
         return None
-    return parts[0] or None
+    try:
+        user_id = int(parts[0])
+        username = parts[1]
+        return (user_id, username) if username else None
+    except (ValueError, IndexError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -178,41 +217,61 @@ class _RateLimiter:
         return False, ""
 
 
-_limiter = _RateLimiter()
+# Registration rate limiter: 5 registrations per IP per hour
+class _RegistrationRateLimiter:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._registrations_by_ip: dict[str, list[float]] = {}
+
+    def _prune(self, window: float):
+        cutoff = time.time() - window
+        for k in list(self._registrations_by_ip.keys()):
+            self._registrations_by_ip[k] = [t for t in self._registrations_by_ip[k] if t >= cutoff]
+            if not self._registrations_by_ip[k]:
+                self._registrations_by_ip.pop(k, None)
+
+    def record_registration(self, key_ip: str):
+        with self._lock:
+            now = time.time()
+            self._registrations_by_ip.setdefault(key_ip, []).append(now)
+            self._prune(3600)
+
+    def is_limited(self, key_ip: str) -> tuple[bool, str]:
+        with self._lock:
+            self._prune(3600)
+            count = len(self._registrations_by_ip.get(key_ip, []))
+        if count >= 5:
+            return True, "Too many account creation attempts from this IP. Try again in an hour."
+        return False, ""
+
+
+_rate_limiter = _RateLimiter()
+_registration_limiter = _RegistrationRateLimiter()
 
 
 # ---------------------------------------------------------------------------
 # FastAPI dependencies
 # ---------------------------------------------------------------------------
 def _is_auth_disabled() -> bool:
-    """Auth is disabled when no credentials are configured at all.
-
-    This preserves the existing local workflow for users who don't want auth.
-    A clear warning is logged at startup in that case.
-    """
-    return not _is_configured()
+    return False
 
 
-def get_session_user(request: Request) -> Optional[str]:
-    if _is_auth_disabled():
-        return "anonymous"
+def get_session_user(request: Request) -> Optional[tuple[int, str]]:
     token = request.cookies.get(SESSION_COOKIE)
     return read_session_cookie(token)
 
 
-def require_auth(request: Request) -> str:
-    user = get_session_user(request)
-    if not user:
+def require_auth(request: Request) -> tuple[int, str]:
+    session = get_session_user(request)
+    if not session:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
         )
-    return user
+    return session
 
 
 def require_csrf(request: Request) -> None:
-    if _is_auth_disabled():
-        return
     session_token = request.cookies.get(SESSION_COOKIE, "")
     header_token = request.headers.get("X-CSRF-Token", "")
     if not verify_csrf(session_token, header_token):
@@ -229,32 +288,36 @@ def is_auth_disabled() -> bool:
 # ---------------------------------------------------------------------------
 # Login / logout helpers
 # ---------------------------------------------------------------------------
-def attempt_login(username: str, password: str, ip: str) -> tuple[bool, str]:
-    """Returns (success, message). Enforces rate limiting."""
-    if _is_auth_disabled():
-        return True, "auth-disabled"
+def attempt_login(username: str, password: str, ip: str) -> tuple[bool, str, Optional[tuple[int, str]]]:
+    """Returns (success, message, session_data). Enforces rate limiting."""
+    _ensure_db_initialized()
 
-    expected_user = _env("APP_USERNAME")
-    expected_hash = _env("APP_PASSWORD_HASH")
-
-    limited, reason = _limiter.is_limited(ip, username or "")
+    limited, reason = _rate_limiter.is_limited(ip, username or "")
     if limited:
-        return False, reason
+        return False, reason, None
 
     if not username or not password:
-        _limiter.record_failure(ip, username or "")
-        return False, "Username and password are required"
+        _rate_limiter.record_failure(ip, username or "")
+        return False, "Username and password are required", None
 
-    if not hmac.compare_digest(username.encode("utf-8"), expected_user.encode("utf-8")):
-        _limiter.record_failure(ip, username)
-        return False, "Invalid username or password"
+    db = _get_db()
+    user = db.get_user_by_username(username)
 
-    if not verify_password(password, expected_hash):
-        _limiter.record_failure(ip, username)
-        return False, "Invalid username or password"
+    if not user:
+        _rate_limiter.record_failure(ip, username)
+        return False, "Invalid username or password", None
 
-    _limiter.clear(ip, username)
-    return True, "ok"
+    if not user.get("is_active", 1):
+        _rate_limiter.record_failure(ip, username)
+        return False, "Invalid username or password", None
+
+    if not verify_password(password, user["password_hash"]):
+        _rate_limiter.record_failure(ip, username)
+        return False, "Invalid username or password", None
+
+    _rate_limiter.clear(ip, username)
+    db.update_last_login(user["id"])
+    return True, "ok", (user["id"], user["username"])
 
 
 def client_ip(request: Request) -> str:
@@ -266,17 +329,101 @@ def client_ip(request: Request) -> str:
     return "unknown"
 
 
-def build_auth_cookies(username: str) -> dict[str, str]:
+def build_auth_cookies(user_id: int, username: str) -> dict[str, str]:
     """Return cookies to set on a successful login response."""
-    session_value = create_session_cookie(username)
+    session_value = create_session_cookie(user_id, username)
     csrf_value = make_csrf_token(session_value)
-    secure = _env("APP_ENV", "development") == "production"
+    secure = _is_production()
     common = {
         "path": "/",
         "httponly": True,
         "samesite": "lax",
         "secure": secure,
     }
+    return {
+        SESSION_COOKIE: {"value": session_value, **common},
+        CSRF_COOKIE: {
+            "value": csrf_value,
+            "path": "/",
+            "httponly": False,
+            "samesite": "lax",
+            "secure": secure,
+        },
+    }
+
+
+def clear_auth_cookies() -> dict[str, str]:
+    secure = _is_production()
+    common = {
+        "path": "/",
+        "expires": "Thu, 01 Jan 1970 00:00:00 GMT",
+        "samesite": "lax",
+        "secure": secure,
+    }
+    return {
+        SESSION_COOKIE: {"value": "", "httponly": True, **common},
+        CSRF_COOKIE: {"value": "", "httponly": False, **common},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Registration helpers
+# ---------------------------------------------------------------------------
+USERNAME_REGEX = re.compile(r"^[a-zA-Z0-9_-]{3,50}$")
+
+
+def validate_username(username: str) -> tuple[bool, str]:
+    if not username:
+        return False, "Please enter a username."
+    username = username.strip()
+    if len(username) < 3 or len(username) > 50:
+        return False, "Username must be 3–50 characters and may contain letters, numbers, _ or -."
+    if not USERNAME_REGEX.match(username):
+        return False, "Username must be 3–50 characters and may contain letters, numbers, _ or -."
+    return True, ""
+
+
+def validate_password(password: str) -> tuple[bool, str]:
+    if not password:
+        return False, "Please enter a password."
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters."
+    if len(password) > 128:
+        return False, "Password must be at most 128 characters."
+    return True, ""
+
+
+def attempt_register(username: str, password: str, confirm_password: str, ip: str) -> tuple[bool, str, Optional[tuple[int, str]]]:
+    """Returns (success, message, session_data). Enforces registration rate limiting."""
+    _ensure_db_initialized()
+
+    limited, reason = _registration_limiter.is_limited(ip)
+    if limited:
+        return False, reason, None
+
+    valid, msg = validate_username(username)
+    if not valid:
+        return False, msg, None
+
+    valid, msg = validate_password(password)
+    if not valid:
+        return False, msg, None
+
+    if password != confirm_password:
+        return False, "Passwords do not match.", None
+
+    _registration_limiter.record_registration(ip)
+
+    db = _get_db()
+
+    existing = db.get_user_by_username(username.strip())
+    if existing:
+        return False, "That username is already in use.", None
+
+    password_hash = hash_password(password)
+    user_id = db.create_user(username.strip(), password_hash)
+
+    return True, "ok", (user_id, username.strip())
     return {
         SESSION_COOKIE: {"value": session_value, **common},
         CSRF_COOKIE: {
