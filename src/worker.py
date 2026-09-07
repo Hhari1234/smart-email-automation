@@ -1,6 +1,5 @@
 """
 Cloudflare Python Worker for Smart Email Automation.
-v2 - with assets binding and run_worker_first
 
 This module serves the FastAPI application on Cloudflare Workers with:
 - D1 database for persistence
@@ -18,8 +17,6 @@ from typing import Optional
 os.environ["CLOUDFLARE_WORKER"] = "1"
 os.environ["APP_ENV"] = "production"
 
-from workers import WorkerEntrypoint, Response
-import asgi
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -393,7 +390,6 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
+import asgi
 
-class Default(WorkerEntrypoint):
-    async def fetch(self, request):
-        return await asgi.fetch(app, request, self.env)
+Default = asgi.entrypoint(app)
