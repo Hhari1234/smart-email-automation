@@ -17,7 +17,8 @@ from typing import Optional
 os.environ["CLOUDFLARE_WORKER"] = "1"
 os.environ["APP_ENV"] = "production"
 
-from workers import WorkerEntrypoint, asgi
+from workers import WorkerEntrypoint
+import asgi
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
