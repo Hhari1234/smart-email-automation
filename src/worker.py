@@ -17,6 +17,7 @@ from typing import Optional
 os.environ["CLOUDFLARE_WORKER"] = "1"
 os.environ["APP_ENV"] = "production"
 
+from workers import WorkerEntrypoint, asgi
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,10 +42,10 @@ from database import Database
 
 _db: Optional[Database] = None
 
-def get_db(request: Request) -> Database:
+def get_db(env) -> Database:
     global _db
     if _db is None:
-        d1_binding = request.env.DB
+        d1_binding = env.DB
         _db = Database(d1_binding=d1_binding)
     return _db
 
@@ -97,7 +98,8 @@ def create_app() -> FastAPI:
     @app.post("/api/auth/login")
     async def login(payload: LoginRequest, request: Request):
         ip = client_ip(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         success, message, session_data = attempt_login(
             payload.username, payload.password, ip, db
         )
@@ -122,7 +124,8 @@ def create_app() -> FastAPI:
     @app.post("/api/auth/register")
     async def register(payload: RegisterRequest, request: Request):
         ip = client_ip(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         success, message, session_data = attempt_register(
             payload.username, payload.password, payload.confirm_password, ip, db
         )
@@ -170,14 +173,16 @@ def create_app() -> FastAPI:
     @app.get("/api/templates")
     async def list_templates(request: Request):
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         return {"templates": db.list_templates(session[0])}
 
     @app.post("/api/templates")
     async def create_template(request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         data = await request.json()
         tid = db.create_template(
             data.get("name", ""),
@@ -191,7 +196,8 @@ def create_app() -> FastAPI:
     @app.get("/api/templates/{template_id}")
     async def get_template(template_id: int, request: Request):
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         tpl = db.get_template(template_id, session[0])
         if not tpl:
             raise HTTPException(status_code=404, detail="Template not found")
@@ -201,7 +207,8 @@ def create_app() -> FastAPI:
     async def update_template(template_id: int, request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         data = await request.json()
         if not db.update_template(template_id, data.get("name", ""), data.get("subject", ""),
                                    data.get("body", ""), data.get("signature", ""), session[0]):
@@ -212,7 +219,8 @@ def create_app() -> FastAPI:
     async def delete_template(template_id: int, request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         if not db.delete_template(template_id, session[0]):
             raise HTTPException(status_code=404, detail="Template not found")
         return {"status": "deleted"}
@@ -220,14 +228,16 @@ def create_app() -> FastAPI:
     @app.get("/api/drafts")
     async def list_drafts(request: Request):
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         return {"drafts": db.list_drafts(session[0])}
 
     @app.post("/api/drafts")
     async def create_draft(request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         data = await request.json()
         did = db.create_draft(
             data.get("name", ""),
@@ -244,7 +254,8 @@ def create_app() -> FastAPI:
     @app.get("/api/drafts/{draft_id}")
     async def get_draft(draft_id: int, request: Request):
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         d = db.get_draft(draft_id, session[0])
         if not d:
             raise HTTPException(status_code=404, detail="Draft not found")
@@ -254,7 +265,8 @@ def create_app() -> FastAPI:
     async def update_draft(draft_id: int, request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         data = await request.json()
         if not db.update_draft(
             draft_id, data.get("name", ""), data.get("subject", ""),
@@ -269,7 +281,8 @@ def create_app() -> FastAPI:
     async def delete_draft(draft_id: int, request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         if not db.delete_draft(draft_id, session[0]):
             raise HTTPException(status_code=404, detail="Draft not found")
         return {"status": "deleted"}
@@ -277,14 +290,16 @@ def create_app() -> FastAPI:
     @app.get("/api/campaigns")
     async def list_campaigns(request: Request):
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         return {"campaigns": db.list_campaigns(session[0])}
 
     @app.post("/api/campaigns")
     async def create_campaign(request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         data = await request.json()
         cid = db.create_campaign(
             data.get("subject", ""),
@@ -299,7 +314,8 @@ def create_app() -> FastAPI:
     @app.get("/api/campaigns/{campaign_id}")
     async def get_campaign(campaign_id: int, request: Request):
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         c = db.get_campaign(campaign_id, session[0])
         if not c:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -309,7 +325,8 @@ def create_app() -> FastAPI:
     async def delete_campaign(campaign_id: int, request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         if not db.delete_campaign(campaign_id, session[0]):
             raise HTTPException(status_code=404, detail="Campaign not found")
         return {"status": "deleted"}
@@ -317,7 +334,8 @@ def create_app() -> FastAPI:
     @app.get("/api/campaigns/{campaign_id}/recipients")
     async def get_campaign_recipients(campaign_id: int, request: Request, status: str = None):
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         c = db.get_campaign(campaign_id, session[0])
         if not c:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -328,7 +346,8 @@ def create_app() -> FastAPI:
     async def add_campaign_recipients(campaign_id: int, request: Request):
         require_csrf(request)
         session = require_auth(request)
-        db = get_db(request)
+        env = request.scope["env"]
+        db = get_db(env)
         c = db.get_campaign(campaign_id, session[0])
         if not c:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -354,5 +373,8 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-from workers import asgi
-Default = asgi.entrypoint(app)
+
+
+class Default(WorkerEntrypoint):
+    async def fetch(self, request):
+        return await asgi.fetch(app, request, self.env)
