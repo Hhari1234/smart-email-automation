@@ -186,8 +186,10 @@ class D1Backend:
     """
     D1 database backend for Cloudflare Workers.
 
-    D1 uses a different API - queries return results via a cursor-like interface.
-    The binding provides exec() method that returns results.
+    D1 uses the Prepared Statement API:
+    - DB.prepare(query).bind(params).run() for INSERT/UPDATE/DELETE
+    - DB.prepare(query).bind(params).all() for SELECT (all rows)
+    - DB.prepare(query).bind(params).first() for SELECT (one row)
     """
 
     def __init__(self, d1_binding):
@@ -196,25 +198,42 @@ class D1Backend:
     def execute(self, query: str, params: tuple = ()) -> list:
         """
         Execute a query and return results as list of rows.
-        D1.exec() returns a result set with rows accessible via iteration.
+        Uses D1's prepared statement API.
         """
-        params_list = list(params) if params else []
-        result = self._d1.exec(query, *params_list)
+        query_upper = query.strip().upper()
+        has_params = params and len(params) > 0
 
-        rows = []
-        for row in result:
-            rows.append(row)
-
-        return rows
+        if query_upper.startswith("SELECT"):
+            stmt = self._d1.prepare(query)
+            if has_params:
+                stmt = stmt.bind(*params)
+            result = stmt.all()
+            return [list(row) for row in result.results] if result.results else []
+        elif query_upper.startswith("INSERT"):
+            stmt = self._d1.prepare(query)
+            if has_params:
+                stmt = stmt.bind(*params)
+            stmt.run()
+            id_result = self._d1.prepare("SELECT last_insert_rowid()").first()
+            return [id_result[0]] if id_result else []
+        elif query_upper.startswith(("UPDATE", "DELETE")):
+            stmt = self._d1.prepare(query)
+            if has_params:
+                stmt = stmt.bind(*params)
+            result = stmt.run()
+            return [result.meta.changes] if hasattr(result, 'meta') else []
+        else:
+            stmt = self._d1.prepare(query)
+            if has_params:
+                stmt = stmt.bind(*params)
+            stmt.run()
+            return []
 
     def executemany(self, query: str, params_list: list):
         """Execute a query with multiple parameter sets."""
-        if self._is_d1:
-            for params in params_list:
-                params_tuple = tuple(params) if not isinstance(params, tuple) else params
-                self._d1.exec(query, params_tuple)
-        else:
-            self._backend.executemany(query, params_list)
+        for params in params_list:
+            params_tuple = tuple(params) if not isinstance(params, tuple) else params
+            self._d1.prepare(query).bind(*params_tuple).run()
 
     def close(self):
         """D1 auto-closes, no-op for compatibility."""
@@ -235,8 +254,21 @@ def create_database_backend(db_path: Optional[Path] = None, d1_binding=None) -> 
     Returns:
         SQLiteBackend for local development, D1Backend for Cloudflare Workers
     """
-    if IS_CLOUDFLARE_WORKER and d1_binding is not None:
-        return D1Backend(d1_binding)
+    if IS_CLOUDFLARE_WORKER:
+        if d1_binding is not None:
+            return D1Backend(d1_binding)
+        # In Cloudflare Workers without explicit d1_binding, try to get from env
+        import os
+        env_d1 = os.environ.get("DB")
+        if env_d1:
+            # We can't create D1Backend without the binding object, return SQLite as fallback
+            # But this shouldn't happen in normal Cloudflare deployment
+            return SQLiteBackend(db_path)
+        # No D1 binding available - this is an error state
+        raise RuntimeError(
+            "Database requires d1_binding in Cloudflare Workers environment. "
+            "Use: Database(d1_binding=context.modules.DB)"
+        )
     return SQLiteBackend(db_path)
 
 
@@ -320,7 +352,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def list_templates(self, user_id: Optional[int] = None):
@@ -385,7 +417,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def list_drafts(self, user_id: Optional[int] = None):
@@ -461,7 +493,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def list_campaigns(self, user_id: Optional[int] = None):
@@ -583,7 +615,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def get_user_by_username(self, username: str):
@@ -629,7 +661,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows
 
     def close(self):

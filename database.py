@@ -320,7 +320,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def list_templates(self, user_id: Optional[int] = None):
@@ -385,7 +385,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def list_drafts(self, user_id: Optional[int] = None):
@@ -461,7 +461,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def list_campaigns(self, user_id: Optional[int] = None):
@@ -583,7 +583,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def get_user_by_username(self, username: str):
@@ -629,7 +629,7 @@ class Database:
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
-            return result[0][0] if result else 0
+            return list(result[0])[0] if result else 0
         return rows
 
     def close(self):
