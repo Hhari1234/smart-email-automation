@@ -1104,6 +1104,15 @@ async def send_history():
 # Static frontend
 # ---------------------------------------------------------------------------
 FRONTEND_DIR = BASE_DIR / "frontend"
+FRONTEND_ROOT = FRONTEND_DIR.resolve()
+
+
+def _frontend_file(file_path: str) -> FileResponse:
+    """Serve a frontend asset without allowing paths outside frontend/."""
+    candidate = (FRONTEND_DIR / file_path).resolve()
+    if FRONTEND_ROOT not in candidate.parents or not candidate.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(candidate)
 
 @app.get("/login")
 async def serve_login():
@@ -1119,10 +1128,19 @@ async def serve_index():
 
 @app.get("/static/{file_path:path}")
 async def serve_static(file_path: str):
-    p = FRONTEND_DIR / file_path
-    if not p.exists():
-        raise HTTPException(status_code=404)
-    return FileResponse(p)
+    return _frontend_file(file_path)
+
+
+# The existing HTML uses root-relative /css and /js URLs. Keep those URLs
+# working in production while retaining /static for backwards compatibility.
+@app.get("/css/{file_path:path}")
+async def serve_css(file_path: str):
+    return _frontend_file(f"css/{file_path}")
+
+
+@app.get("/js/{file_path:path}")
+async def serve_js(file_path: str):
+    return _frontend_file(f"js/{file_path}")
 
 # ---------------------------------------------------------------------------
 # Run

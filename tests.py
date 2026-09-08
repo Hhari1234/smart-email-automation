@@ -29,6 +29,15 @@ from auth import (
 class TestAuthentication:
     """Test authentication functionality."""
 
+    def test_frontend_pages_and_assets(self, client):
+        """Frontend routes and root-relative assets should be available."""
+        assert client.get("/").status_code == 200
+        assert client.get("/login").status_code == 200
+        assert client.get("/signup").status_code == 200
+        assert client.get("/css/styles.css").status_code == 200
+        assert client.get("/css/login.css").status_code == 200
+        assert client.get("/js/app.js").status_code == 200
+
     def test_health_endpoint(self, client):
         """Health endpoint should return ok."""
         resp = client.get("/health")
