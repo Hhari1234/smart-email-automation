@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS campaign_recipients (
 
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL DEFAULT '',
+    email TEXT,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -120,7 +122,26 @@ class SQLiteBackend:
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.executescript(SQLITE_SCHEMA)
         self._conn.commit()
+        self._migrate_user_profile()
         self._migrate_add_user_id()
+
+    def _migrate_user_profile(self):
+        """Add registration profile columns to databases created by older versions."""
+        try:
+            cursor = self._conn.execute("PRAGMA table_info(users)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "name" not in columns:
+                self._conn.execute("ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+            if "email" not in columns:
+                self._conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+            self._conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique "
+                "ON users(email) WHERE email IS NOT NULL AND email <> ''"
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def _migrate_add_user_id(self):
         """Add user_id columns and indexes if they don't exist."""
@@ -575,11 +596,17 @@ class Database:
     # -------------------------------------------------------------------------
     # Users
     # -------------------------------------------------------------------------
-    def create_user(self, username: str, password_hash: str) -> int:
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        name: str = "",
+        email: Optional[str] = None,
+    ) -> int:
         now = datetime.now().isoformat(timespec="seconds")
         rows = self._backend.execute(
-            "INSERT INTO users (username, password_hash, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?)",
-            (username, password_hash, now, now, 1)
+            "INSERT INTO users (name, email, username, password_hash, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, email, username, password_hash, now, now, 1)
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
@@ -588,22 +615,35 @@ class Database:
 
     def get_user_by_username(self, username: str):
         rows = self._backend.execute(
-            "SELECT id, username, password_hash, created_at, updated_at, is_active, last_login_at FROM users WHERE username = ?",
+            "SELECT id, name, email, username, password_hash, created_at, updated_at, is_active, last_login_at "
+            "FROM users WHERE LOWER(username) = LOWER(?) LIMIT 1",
             (username,)
         )
         if not rows:
             return None
-        cols = ["id", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
+        cols = ["id", "name", "email", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
+        return dict(zip(cols, rows[0]))
+
+    def get_user_by_email(self, email: str):
+        rows = self._backend.execute(
+            "SELECT id, name, email, username, password_hash, created_at, updated_at, is_active, last_login_at "
+            "FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1",
+            (email,),
+        )
+        if not rows:
+            return None
+        cols = ["id", "name", "email", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
         return dict(zip(cols, rows[0]))
 
     def get_user_by_id(self, user_id: int):
         rows = self._backend.execute(
-            "SELECT id, username, password_hash, created_at, updated_at, is_active, last_login_at FROM users WHERE id = ?",
+            "SELECT id, name, email, username, password_hash, created_at, updated_at, is_active, last_login_at "
+            "FROM users WHERE id = ?",
             (user_id,)
         )
         if not rows:
             return None
-        cols = ["id", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
+        cols = ["id", "name", "email", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
         return dict(zip(cols, rows[0]))
 
     def update_last_login(self, user_id: int):
@@ -624,8 +664,8 @@ class Database:
     def migrate_legacy_user(self, username: str, password_hash: str) -> int:
         now = datetime.now().isoformat(timespec="seconds")
         rows = self._backend.execute(
-            "INSERT INTO users (username, password_hash, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?)",
-            (username, password_hash, now, now, 1)
+            "INSERT INTO users (name, email, username, password_hash, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (username, None, username, password_hash, now, now, 1)
         )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")

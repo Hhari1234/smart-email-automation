@@ -74,18 +74,25 @@ def auth_cookies(client):
 
     # Register
     resp = client.post("/api/auth/register", json={
+        "name": "Test User",
+        "email": f"{username}@example.com",
         "username": username,
         "password": password,
         "confirm_password": confirm,
     })
     assert resp.status_code == 200, f"Registration failed: {resp.json()}"
 
-    # Get session cookie
-    cookies = resp.cookies
+    # Registration does not authenticate; sign in through the normal flow.
+    login = client.post("/api/auth/login", json={
+        "username": username,
+        "password": password,
+    })
+    assert login.status_code == 200, f"Login failed: {login.json()}"
+    cookies = login.cookies
     return {
         "rm_session": cookies.get("rm_session", ""),
         "rm_csrf": cookies.get("rm_csrf", ""),
-    }, username
+    }, username, f"{username}@example.com"
 
 
 @pytest.fixture(scope="function")
@@ -94,22 +101,36 @@ def two_users(client):
     # Create first user
     user1_name = f"user1_{int(time.time() * 1000000)}"
     resp1 = client.post("/api/auth/register", json={
+        "name": "User One",
+        "email": f"{user1_name}@example.com",
         "username": user1_name,
         "password": "Password123!",
         "confirm_password": "Password123!",
     })
     assert resp1.status_code == 200
-    cookies1 = resp1.cookies
+    login1 = client.post("/api/auth/login", json={
+        "username": user1_name,
+        "password": "Password123!",
+    })
+    assert login1.status_code == 200
+    cookies1 = login1.cookies
 
     # Create second user
     user2_name = f"user2_{int(time.time() * 1000000)}"
     resp2 = client.post("/api/auth/register", json={
+        "name": "User Two",
+        "email": f"{user2_name}@example.com",
         "username": user2_name,
         "password": "Password456!",
         "confirm_password": "Password456!",
     })
     assert resp2.status_code == 200
-    cookies2 = resp2.cookies
+    login2 = client.post("/api/auth/login", json={
+        "username": user2_name,
+        "password": "Password456!",
+    })
+    assert login2.status_code == 200
+    cookies2 = login2.cookies
 
     return {
         "user1": {"cookies": cookies1, "username": user1_name},

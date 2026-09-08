@@ -45,33 +45,59 @@ class TestAuthentication:
         assert data["auth_enabled"] == True
 
     def test_registration_success(self, client):
-        """Valid registration should succeed and auto-login."""
+        """Valid registration should create an account without auto-login."""
         username = f"newuser_{int(time.time() * 1000)}"
         resp = client.post("/api/auth/register", json={
+            "name": "New User",
+            "email": f"{username}@example.com",
             "username": username,
             "password": "ValidPassword123!",
             "confirm_password": "ValidPassword123!",
         })
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "ok"
-        assert data["username"] == username
-        assert "rm_session" in resp.cookies
+        assert data["success"] is True
+        assert data["message"] == "Account created successfully"
+        assert "rm_session" not in resp.cookies
+
+        login = client.post("/api/auth/login", json={
+            "username": username,
+            "password": "ValidPassword123!",
+        })
+        assert login.status_code == 200
+        assert "rm_session" in login.cookies
 
     def test_registration_duplicate_username(self, client, auth_cookies):
         """Registration with existing username should fail."""
         existing_username = auth_cookies[1]  # Use username from auth_cookies fixture
         resp = client.post("/api/auth/register", json={
+            "name": "Another User",
+            "email": f"another_{int(time.time() * 1000)}@example.com",
             "username": existing_username,
             "password": "NewPassword123!",
             "confirm_password": "NewPassword123!",
         })
         assert resp.status_code == 400
-        assert "already in use" in resp.json()["detail"]
+        assert "already taken" in resp.json()["detail"]
+
+    def test_registration_duplicate_email(self, client, auth_cookies):
+        """Registration with an existing email should fail safely."""
+        username = f"another_{int(time.time() * 1000)}"
+        resp = client.post("/api/auth/register", json={
+            "name": "Another User",
+            "email": auth_cookies[2],
+            "username": username,
+            "password": "NewPassword123!",
+            "confirm_password": "NewPassword123!",
+        })
+        assert resp.status_code == 400
+        assert "email already exists" in resp.json()["detail"]
 
     def test_registration_password_mismatch(self, client):
         """Registration with mismatched passwords should fail."""
         resp = client.post("/api/auth/register", json={
+            "name": "Mismatch User",
+            "email": f"mismatch_{int(time.time() * 1000)}@example.com",
             "username": f"testuser_{int(time.time() * 1000)}",
             "password": "Password123!",
             "confirm_password": "DifferentPassword456!",
@@ -82,6 +108,8 @@ class TestAuthentication:
     def test_registration_weak_password(self, client):
         """Registration with weak password should fail."""
         resp = client.post("/api/auth/register", json={
+            "name": "Weak User",
+            "email": f"weak_{int(time.time() * 1000)}@example.com",
             "username": f"testuser_{int(time.time() * 1000)}",
             "password": "short",
             "confirm_password": "short",
@@ -418,7 +446,7 @@ class TestDatabase:
         """Users can be created and retrieved."""
         password_hash = hash_password("TestPassword123!")
         unique_username = f"testuser_{int(time.time() * 1000000)}"
-        user_id = temp_db.create_user(unique_username, password_hash)
+        user_id = temp_db.create_user(unique_username, password_hash, name="Test User", email=f"{unique_username}@example.com")
         assert user_id > 0
 
         user = temp_db.get_user_by_username(unique_username)
@@ -584,6 +612,8 @@ class TestRateLimiting:
         for i in range(5):
             username = f"rateuser_{i}_{int(time.time() * 1000)}"
             resp = client.post("/api/auth/register", json={
+                "name": f"Rate User {i}",
+                "email": f"{username}@example.com",
                 "username": username,
                 "password": "Password123!",
                 "confirm_password": "Password123!",

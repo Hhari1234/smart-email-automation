@@ -107,7 +107,7 @@ async def add_security_headers(request: Request, call_next):
 
     path = request.url.path or ""
     # Don't add restrictive headers to the login page assets; keep HSTS only on HTML.
-    is_html = path.endswith(".html") or path in ("/", "/login")
+    is_html = path.endswith(".html") or path in ("/", "/login", "/signup")
 
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -539,9 +539,11 @@ class LoginRequest(BaseModel):
     password: str
 
 class RegisterRequest(BaseModel):
-    username: str
-    password: str
-    confirm_password: str
+    name: str = ""
+    email: str = ""
+    username: str = ""
+    password: str = ""
+    confirm_password: str = ""
 
 
 def _set_cookie(response: Response, name: str, value: str, **kwargs):
@@ -568,24 +570,30 @@ async def login(payload: LoginRequest, request: Request):
 
 
 @app.post("/api/auth/register")
+@app.post("/api/auth/signup")
 async def register(payload: RegisterRequest, request: Request):
     ip = client_ip(request)
 
     success, message, session_data = attempt_register(
-        payload.username, payload.password, payload.confirm_password, ip, db
+        payload.name,
+        payload.email,
+        payload.username,
+        payload.password,
+        payload.confirm_password,
+        ip,
+        db,
     )
     if not success:
         status_code = 429 if "Too many" in message else 400
         raise HTTPException(status_code=status_code, detail=message)
 
-    user_id, username = session_data
-    cookies = build_auth_cookies(user_id, username)
-    response = JSONResponse({"status": "ok", "username": username})
-    for name, cfg in cookies.items():
-        _set_cookie(response, name, cfg["value"], **{
-            k: v for k, v in cfg.items() if k != "value"
-        })
-    return response
+    # Registration deliberately does not authenticate the new account. The
+    # user signs in through the existing login flow, avoiding a second session
+    # path and making the success state explicit.
+    return JSONResponse({
+        "success": True,
+        "message": "Account created successfully",
+    })
 
 
 @app.post("/api/auth/logout")
@@ -1099,6 +1107,10 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 
 @app.get("/login")
 async def serve_login():
+    return FileResponse(FRONTEND_DIR / "login.html")
+
+@app.get("/signup")
+async def serve_signup():
     return FileResponse(FRONTEND_DIR / "login.html")
 
 @app.get("/")

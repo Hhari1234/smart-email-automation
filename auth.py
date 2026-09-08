@@ -10,7 +10,7 @@ Features:
 - Registration rate limiting
 - Session fixation protection (new session id on login)
 - Reasonable session expiration
-- SQLite-backed user storage with migration path for legacy env-based auth
+ - SQLite-backed user storage with migration path for legacy env-based auth
 
 Configuration is via environment variables (.env file is fine):
     APP_SECRET_KEY     -- long random string used to sign session cookies
@@ -20,6 +20,7 @@ Configuration is via environment variables (.env file is fine):
 import hmac
 import os
 import re
+import sqlite3
 import time
 import threading
 from hashlib import sha256
@@ -29,6 +30,7 @@ import bcrypt
 from fastapi import Request, HTTPException, status, Depends
 from fastapi.responses import JSONResponse
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from validators import is_valid_email
 
 
 # ---------------------------------------------------------------------------
@@ -95,17 +97,17 @@ def _migrate_legacy_user():
         if _legacy_migrated:
             return
 
-        db = _get_db()
-        if db.user_exists():
-            _legacy_migrated = True
-            return
-
         username = _env("APP_USERNAME")
         password_hash = _env("APP_PASSWORD_HASH")
 
         if username and password_hash:
-            db.migrate_legacy_user(username, password_hash)
-            _legacy_migrated = True
+            db = _get_db()
+            # Migrate the configured account even when self-service users
+            # already exist. This keeps the existing admin login working.
+            if not db.get_user_by_username(username):
+                db.migrate_legacy_user(username, password_hash)
+
+        _legacy_migrated = True
 
 
 def _ensure_db_initialized():
@@ -302,21 +304,22 @@ def attempt_login(username: str, password: str, ip: str, db=None) -> tuple[bool,
 
     if db is None:
         db = _get_db()
-    user = db.get_user_by_username(username)
+    normalized_username = normalize_username(username)
+    user = db.get_user_by_username(normalized_username)
 
     if not user:
-        _rate_limiter.record_failure(ip, username)
+        _rate_limiter.record_failure(ip, normalized_username)
         return False, "Invalid username or password", None
 
     if not user.get("is_active", 1):
-        _rate_limiter.record_failure(ip, username)
+        _rate_limiter.record_failure(ip, normalized_username)
         return False, "Invalid username or password", None
 
     if not verify_password(password, user["password_hash"]):
-        _rate_limiter.record_failure(ip, username)
+        _rate_limiter.record_failure(ip, normalized_username)
         return False, "Invalid username or password", None
 
-    _rate_limiter.clear(ip, username)
+    _rate_limiter.clear(ip, normalized_username)
     db.update_last_login(user["id"])
     return True, "ok", (user["id"], user["username"])
 
@@ -373,7 +376,33 @@ def clear_auth_cookies() -> dict[str, str]:
 USERNAME_REGEX = re.compile(r"^[a-zA-Z0-9_-]{3,50}$")
 
 
+def normalize_username(username: str) -> str:
+    """Normalize new usernames and login lookups consistently."""
+    return (username or "").strip().lower()
+
+
+def normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def validate_name(name: str) -> tuple[bool, str]:
+    name = (name or "").strip()
+    if not name:
+        return False, "Please enter your full name."
+    if len(name) > 100:
+        return False, "Full name must be at most 100 characters."
+    return True, ""
+
+
+def validate_email(email: str) -> tuple[bool, str]:
+    email = normalize_email(email)
+    if not email or not is_valid_email(email):
+        return False, "Please enter a valid email address."
+    return True, ""
+
+
 def validate_username(username: str) -> tuple[bool, str]:
+    username = normalize_username(username)
     if not username:
         return False, "Please enter a username."
     username = username.strip()
@@ -394,13 +423,33 @@ def validate_password(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-def attempt_register(username: str, password: str, confirm_password: str, ip: str, db=None) -> tuple[bool, str, Optional[tuple[int, str]]]:
+def attempt_register(
+    name: str,
+    email: str,
+    username: str,
+    password: str,
+    confirm_password: str,
+    ip: str,
+    db=None,
+) -> tuple[bool, str, Optional[tuple[int, str]]]:
     """Returns (success, message, session_data). Enforces registration rate limiting."""
     _ensure_db_initialized()
 
     limited, reason = _registration_limiter.is_limited(ip)
     if limited:
         return False, reason, None
+
+    name = (name or "").strip()
+    email = normalize_email(email)
+    username = normalize_username(username)
+
+    valid, msg = validate_name(name)
+    if not valid:
+        return False, msg, None
+
+    valid, msg = validate_email(email)
+    if not valid:
+        return False, msg, None
 
     valid, msg = validate_username(username)
     if not valid:
@@ -418,11 +467,24 @@ def attempt_register(username: str, password: str, confirm_password: str, ip: st
     if db is None:
         db = _get_db()
 
-    existing = db.get_user_by_username(username.strip())
-    if existing:
-        return False, "That username is already in use.", None
+    if db.get_user_by_email(email):
+        return False, "An account with this email already exists.", None
+
+    if db.get_user_by_username(username):
+        return False, "This username is already taken.", None
 
     password_hash = hash_password(password)
-    user_id = db.create_user(username.strip(), password_hash)
+    try:
+        user_id = db.create_user(username, password_hash, name=name, email=email)
+    except sqlite3.IntegrityError:
+        # A concurrent request may win the uniqueness race. Re-check the
+        # public-safe conflicts without exposing database details.
+        if db.get_user_by_email(email):
+            return False, "An account with this email already exists.", None
+        if db.get_user_by_username(username):
+            return False, "This username is already taken.", None
+        return False, "Something went wrong. Please try again.", None
+    except Exception:
+        return False, "Something went wrong. Please try again.", None
 
-    return True, "ok", (user_id, username.strip())
+    return True, "ok", (user_id, username)
