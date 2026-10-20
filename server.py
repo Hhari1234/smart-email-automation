@@ -154,19 +154,32 @@ ALLOWED_KIND_EXTENSIONS = {
 }
 
 def _runtime_dir(name: str) -> Path:
-    base = os.environ.get("TMPDIR") or os.environ.get("TEMP") or os.environ.get("TMP")
-    if not base or not Path(base).exists():
-        base = str(Path.cwd())
-    target = Path(base) / name
+    """Return a writable runtime directory."""
+    if os.environ.get("VERCEL"):
+        base = Path("/tmp")
+    else:
+        base = Path(
+            os.environ.get("TMPDIR")
+            or os.environ.get("TEMP")
+            or os.environ.get("TMP")
+            or str(Path.cwd())
+        )
+
+    target = base / name
     target.mkdir(parents=True, exist_ok=True)
     return target
 
+
 # Ensure data directory exists
-data_dir = os.environ.get("RESUMEMAILER_DATA_DIR", "")
+data_dir = os.environ.get("RESUMEMAILER_DATA_DIR", "").strip()
+
 if data_dir:
-    Path(data_dir).mkdir(parents=True, exist_ok=True)
-    UPLOADS_DIR = Path(data_dir) / "uploads"
-    LOGS_DIR = Path(data_dir) / "logs"
+    persistent_base = Path(data_dir)
+    persistent_base.mkdir(parents=True, exist_ok=True)
+
+    UPLOADS_DIR = persistent_base / "uploads"
+    LOGS_DIR = persistent_base / "logs"
+
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 else:
