@@ -158,6 +158,25 @@ html, body {
   box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.15);
 }
 
+.form-input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.form-input[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 4px rgba(255, 77, 109, 0.14);
+}
+
+.field-error {
+  display: none;
+  color: #ff9aae;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.field-error:not([hidden]) {
+  display: block;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -205,6 +224,44 @@ html, body {
   border-radius: 8px;
   font-size: 13px;
 }
+
+.form-success {
+  background: rgba(71, 214, 145, 0.1);
+  border: 1px solid rgba(71, 214, 145, 0.3);
+  color: #8cf0bd;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.strength-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.strength-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--danger);
+  transition: width 0.2s ease, background 0.2s ease;
+}
+
+.strength-track span[data-score="2"] { background: #f4b860; }
+.strength-track span[data-score="3"] { background: #7fcf87; }
+.strength-track span[data-score="4"] { background: #47d691; }
 
 .login-footer {
   margin: 24px 0 0;

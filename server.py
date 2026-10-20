@@ -107,7 +107,7 @@ async def add_security_headers(request: Request, call_next):
 
     path = request.url.path or ""
     # Don't add restrictive headers to the login page assets; keep HSTS only on HTML.
-    is_html = path.endswith(".html") or path in ("/", "/login")
+    is_html = path.endswith(".html") or path in ("/", "/login", "/signup")
 
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -154,19 +154,32 @@ ALLOWED_KIND_EXTENSIONS = {
 }
 
 def _runtime_dir(name: str) -> Path:
-    base = os.environ.get("TMPDIR") or os.environ.get("TEMP") or os.environ.get("TMP")
-    if not base or not Path(base).exists():
-        base = str(Path.cwd())
-    target = Path(base) / name
+    """Return a writable runtime directory."""
+    if os.environ.get("VERCEL"):
+        base = Path("/tmp")
+    else:
+        base = Path(
+            os.environ.get("TMPDIR")
+            or os.environ.get("TEMP")
+            or os.environ.get("TMP")
+            or str(Path.cwd())
+        )
+
+    target = base / name
     target.mkdir(parents=True, exist_ok=True)
     return target
 
+
 # Ensure data directory exists
-data_dir = os.environ.get("RESUMEMAILER_DATA_DIR", "")
+data_dir = os.environ.get("RESUMEMAILER_DATA_DIR", "").strip()
+
 if data_dir:
-    Path(data_dir).mkdir(parents=True, exist_ok=True)
-    UPLOADS_DIR = Path(data_dir) / "uploads"
-    LOGS_DIR = Path(data_dir) / "logs"
+    persistent_base = Path(data_dir)
+    persistent_base.mkdir(parents=True, exist_ok=True)
+
+    UPLOADS_DIR = persistent_base / "uploads"
+    LOGS_DIR = persistent_base / "logs"
+
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 else:
@@ -570,24 +583,30 @@ async def login(payload: LoginRequest, request: Request):
 
 
 @app.post("/api/auth/register")
+@app.post("/api/auth/signup")
 async def register(payload: RegisterRequest, request: Request):
     ip = client_ip(request)
 
     success, message, session_data = attempt_register(
-        payload.username, payload.password, payload.confirm_password, ip, db, payload.email, payload.name
+        payload.name,
+        payload.email,
+        payload.username,
+        payload.password,
+        payload.confirm_password,
+        ip,
+        db,
     )
     if not success:
         status_code = 429 if "Too many" in message else 400
         raise HTTPException(status_code=status_code, detail=message)
 
-    user_id, username = session_data
-    cookies = build_auth_cookies(user_id, username)
-    response = JSONResponse({"status": "ok", "username": username})
-    for name, cfg in cookies.items():
-        _set_cookie(response, name, cfg["value"], **{
-            k: v for k, v in cfg.items() if k != "value"
-        })
-    return response
+    # Registration deliberately does not authenticate the new account. The
+    # user signs in through the existing login flow, avoiding a second session
+    # path and making the success state explicit.
+    return JSONResponse({
+        "success": True,
+        "message": "Account created successfully",
+    })
 
 
 @app.post("/api/auth/logout")
@@ -1098,9 +1117,22 @@ async def send_history():
 # Static frontend
 # ---------------------------------------------------------------------------
 FRONTEND_DIR = BASE_DIR / "frontend"
+FRONTEND_ROOT = FRONTEND_DIR.resolve()
+
+
+def _frontend_file(file_path: str) -> FileResponse:
+    """Serve a frontend asset without allowing paths outside frontend/."""
+    candidate = (FRONTEND_DIR / file_path).resolve()
+    if FRONTEND_ROOT not in candidate.parents or not candidate.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(candidate)
 
 @app.get("/login")
 async def serve_login():
+    return FileResponse(FRONTEND_DIR / "login.html")
+
+@app.get("/signup")
+async def serve_signup():
     return FileResponse(FRONTEND_DIR / "login.html")
 
 @app.get("/")
@@ -1119,10 +1151,19 @@ async def serve_signup():
 
 @app.get("/static/{file_path:path}")
 async def serve_static(file_path: str):
-    p = FRONTEND_DIR / file_path
-    if not p.exists():
-        raise HTTPException(status_code=404)
-    return FileResponse(p)
+    return _frontend_file(file_path)
+
+
+# The existing HTML uses root-relative /css and /js URLs. Keep those URLs
+# working in production while retaining /static for backwards compatibility.
+@app.get("/css/{file_path:path}")
+async def serve_css(file_path: str):
+    return _frontend_file(f"css/{file_path}")
+
+
+@app.get("/js/{file_path:path}")
+async def serve_js(file_path: str):
+    return _frontend_file(f"js/{file_path}")
 
 # ---------------------------------------------------------------------------
 # Run
