@@ -7,6 +7,7 @@ Tests cover:
 - Multi-user data isolation
 - IDOR protection
 - Database operations
+- Email validation
 
 Note: Fixtures are defined in conftest.py
 """
@@ -20,7 +21,9 @@ from auth import (
     read_session_cookie,
     make_csrf_token,
     verify_csrf,
+    attempt_register,
 )
+from validators import is_valid_email, clean_email
 
 
 # =============================================================================
@@ -48,6 +51,8 @@ class TestAuthentication:
         """Valid registration should succeed and auto-login."""
         username = f"newuser_{int(time.time() * 1000)}"
         resp = client.post("/api/auth/register", json={
+            "name": "New User",
+            "email": f"{username}@example.com",
             "username": username,
             "password": "ValidPassword123!",
             "confirm_password": "ValidPassword123!",
@@ -62,6 +67,8 @@ class TestAuthentication:
         """Registration with existing username should fail."""
         existing_username = auth_cookies[1]  # Use username from auth_cookies fixture
         resp = client.post("/api/auth/register", json={
+            "name": "Another User",
+            "email": f"another_{existing_username}@example.com",
             "username": existing_username,
             "password": "NewPassword123!",
             "confirm_password": "NewPassword123!",
@@ -72,6 +79,8 @@ class TestAuthentication:
     def test_registration_password_mismatch(self, client):
         """Registration with mismatched passwords should fail."""
         resp = client.post("/api/auth/register", json={
+            "name": "Test User",
+            "email": f"testuser_{int(time.time() * 1000)}@example.com",
             "username": f"testuser_{int(time.time() * 1000)}",
             "password": "Password123!",
             "confirm_password": "DifferentPassword456!",
@@ -82,6 +91,8 @@ class TestAuthentication:
     def test_registration_weak_password(self, client):
         """Registration with weak password should fail."""
         resp = client.post("/api/auth/register", json={
+            "name": "Test User",
+            "email": f"testuser_{int(time.time() * 1000)}@example.com",
             "username": f"testuser_{int(time.time() * 1000)}",
             "password": "short",
             "confirm_password": "short",
@@ -584,6 +595,8 @@ class TestRateLimiting:
         for i in range(5):
             username = f"rateuser_{i}_{int(time.time() * 1000)}"
             resp = client.post("/api/auth/register", json={
+                "name": f"Rate User {i}",
+                "email": f"{username}@example.com",
                 "username": username,
                 "password": "Password123!",
                 "confirm_password": "Password123!",
@@ -609,6 +622,230 @@ class TestRateLimiting:
         else:
             # If we didn't get rate limited, the account might be locked
             pass
+
+
+# =============================================================================
+# EMAIL VALIDATION TESTS
+# =============================================================================
+class TestEmailValidation:
+    """Test email validation functionality."""
+
+    # Valid emails that should pass
+    VALID_EMAILS = [
+        "hariraj.kuragayala@gmail.com",
+        "test@example.com",
+        "user@sub.domain.com",
+        "simple@gmail.com",
+        "test@sub.domain.co.uk",
+        "test+tag@gmail.com",
+        "user.name+tag@sub.example.co.uk",
+        "a@b.co",
+        "test@123.com",
+        "test@domain123.com",
+        "test@domain.name",
+        "test@domain.info",
+        "test@domain.museum",
+        "test@domain.travel",
+        "test@xn--example.com",  # IDN
+        "test@example-domain.com",
+        "user123@test-domain.org",
+        "first.last@company.co.uk",
+        "user_name@domain.com",
+        "user-name@domain.com",
+        "user.name@sub.domain.com",
+    ]
+
+    # Invalid emails that should fail
+    INVALID_EMAILS = [
+        "",  # empty
+        "test@domain",  # no TLD
+        "test@.com",  # empty domain label
+        "test@domain.",  # trailing dot
+        "test..test@gmail.com",  # consecutive dots in local part
+        "test@-domain.com",  # hyphen at start of domain label
+        "test@domain-.com",  # hyphen at end of domain label
+        ".test@gmail.com",  # leading dot in local part
+        "test.@gmail.com",  # trailing dot in local part
+        "test@gmail..com",  # consecutive dots in domain
+        "test@sub.-domain.com",  # hyphen at start of subdomain
+        "a@b.c",  # TLD too short
+        "test@example.c",  # TLD too short
+        "notanemail",  # no @
+        "@nodomain.com",  # no local part
+        "test@",  # no domain
+        "test@domain.c",  # TLD too short
+        "test@.domain.com",  # empty subdomain
+        "test@domain..com",  # double dot in domain
+    ]
+
+    def test_valid_emails(self):
+        """All valid emails should pass validation."""
+        for email in self.VALID_EMAILS:
+            assert is_valid_email(email) is True, f"Expected valid: {email}"
+
+    def test_invalid_emails(self):
+        """All invalid emails should fail validation."""
+        for email in self.INVALID_EMAILS:
+            assert is_valid_email(email) is False, f"Expected invalid: {email}"
+
+    def test_clean_email(self):
+        """clean_email should normalize email addresses."""
+        assert clean_email("  Test@Example.COM  ") == "test@example.com"
+        assert clean_email("USER@DOMAIN.COM") == "user@domain.com"
+        assert clean_email("") == ""
+        assert clean_email(None) == ""
+
+    def test_email_length_limit(self):
+        """Emails longer than 254 characters should be invalid."""
+        # 255 chars total (over limit)
+        long_local = "a" * 243
+        long_email = f"{long_local}@example.com"
+        assert len(long_email) == 255
+        assert is_valid_email(long_email) is False
+
+        # Exactly 254 chars should be valid (if format is correct)
+        # 254 - len("@example.com") = 242 chars for local part
+        max_local = "a" * 242
+        max_email = f"{max_local}@example.com"
+        assert len(max_email) == 254
+        assert is_valid_email(max_email) is True
+
+    def test_registration_requires_email(self, client):
+        """Registration should require a valid email."""
+        # Test missing email
+        resp = client.post("/api/auth/register", json={
+            "name": "Test User",
+            "email": "",
+            "username": f"testuser_{int(time.time() * 1000)}",
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        })
+        assert resp.status_code == 400
+        assert "email" in resp.json()["detail"].lower()
+
+    def test_registration_rejects_invalid_email(self, client):
+        """Registration should reject invalid email formats."""
+        invalid_emails = ["invalid", "test@", "@domain.com", "test@domain", "test..test@gmail.com"]
+        for email in invalid_emails:
+            resp = client.post("/api/auth/register", json={
+                "name": "Test User",
+                "email": email,
+                "username": f"testuser_{int(time.time() * 1000000)}",
+                "password": "ValidPassword123!",
+                "confirm_password": "ValidPassword123!",
+            })
+            assert resp.status_code == 400, f"Expected 400 for email: {email}, got {resp.status_code}: {resp.json()}"
+            assert "valid email" in resp.json()["detail"].lower()
+
+    def test_registration_accepts_valid_email(self, client):
+        """Registration should accept valid email formats."""
+        valid_emails = [
+            "hariraj.kuragayala@gmail.com",
+            "test@example.com",
+            "user@sub.domain.com",
+            "test+tag@gmail.com",
+            "user.name@sub.domain.co.uk",
+        ]
+        for email in valid_emails:
+            username = f"testuser_{int(time.time() * 1000000)}"
+            resp = client.post("/api/auth/register", json={
+                "name": "Test User",
+                "email": email,
+                "username": username,
+                "password": "ValidPassword123!",
+                "confirm_password": "ValidPassword123!",
+            })
+            assert resp.status_code == 200, f"Expected 200 for email: {email}, got {resp.status_code}: {resp.json()}"
+
+    def test_registration_rejects_duplicate_email(self, client):
+        """Registration should reject duplicate email addresses."""
+        email = "duplicate@example.com"
+        username1 = f"user1_{int(time.time() * 1000)}"
+        username2 = f"user2_{int(time.time() * 1000)}"
+
+        # First registration should succeed
+        resp1 = client.post("/api/auth/register", json={
+            "name": "User One",
+            "email": email,
+            "username": username1,
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        })
+        assert resp1.status_code == 200
+
+        # Second registration with same email should fail
+        resp2 = client.post("/api/auth/register", json={
+            "name": "User Two",
+            "email": email,
+            "username": username2,
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        })
+        assert resp2.status_code == 400
+        assert "already exists" in resp2.json()["detail"].lower()
+
+    def test_attempt_register_function_valid_email(self, temp_db):
+        """attempt_register should accept valid emails."""
+        success, msg, session = attempt_register(
+            username="testuser",
+            password="ValidPassword123!",
+            confirm_password="ValidPassword123!",
+            ip="127.0.0.1",
+            db=temp_db,
+            email="test@example.com",
+            name="Test User"
+        )
+        assert success is True
+        assert msg == "ok"
+        assert session is not None
+
+        # Verify user was created with email and name
+        user = temp_db.get_user_by_username("testuser")
+        assert user is not None
+        assert user["email"] == "test@example.com"
+        assert user["name"] == "Test User"
+
+    def test_attempt_register_function_invalid_email(self, temp_db):
+        """attempt_register should reject invalid emails."""
+        success, msg, session = attempt_register(
+            username="testuser",
+            password="ValidPassword123!",
+            confirm_password="ValidPassword123!",
+            ip="127.0.0.1",
+            db=temp_db,
+            email="invalid-email",
+            name="Test User"
+        )
+        assert success is False
+        assert "valid email" in msg.lower()
+        assert session is None
+
+    def test_attempt_register_function_duplicate_email(self, temp_db):
+        """attempt_register should reject duplicate emails."""
+        # Create first user
+        attempt_register(
+            username="user1",
+            password="ValidPassword123!",
+            confirm_password="ValidPassword123!",
+            ip="127.0.0.1",
+            db=temp_db,
+            email="duplicate@example.com",
+            name="User One"
+        )
+
+        # Try to create second user with same email
+        success, msg, session = attempt_register(
+            username="user2",
+            password="ValidPassword123!",
+            confirm_password="ValidPassword123!",
+            ip="127.0.0.1",
+            db=temp_db,
+            email="duplicate@example.com",
+            name="User Two"
+        )
+        assert success is False
+        assert "already exists" in msg.lower()
+        assert session is None
 
 
 if __name__ == "__main__":

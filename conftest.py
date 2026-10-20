@@ -74,6 +74,8 @@ def auth_cookies(client):
 
     # Register
     resp = client.post("/api/auth/register", json={
+        "name": "Test User",
+        "email": f"{username}@example.com",
         "username": username,
         "password": password,
         "confirm_password": confirm,
@@ -94,6 +96,8 @@ def two_users(client):
     # Create first user
     user1_name = f"user1_{int(time.time() * 1000000)}"
     resp1 = client.post("/api/auth/register", json={
+        "name": "User One",
+        "email": f"{user1_name}@example.com",
         "username": user1_name,
         "password": "Password123!",
         "confirm_password": "Password123!",
@@ -104,6 +108,8 @@ def two_users(client):
     # Create second user
     user2_name = f"user2_{int(time.time() * 1000000)}"
     resp2 = client.post("/api/auth/register", json={
+        "name": "User Two",
+        "email": f"{user2_name}@example.com",
         "username": user2_name,
         "password": "Password456!",
         "confirm_password": "Password456!",

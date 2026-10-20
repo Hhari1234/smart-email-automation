@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create Account — Smart Email Automation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/login.css" />
+</head>
+<body>
+  <div class="bg-aurora">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="grid-overlay"></div>
+  </div>
+
+  <main class="login-shell">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+        </div>
+        <span>Smart Email Automation</span>
+      </div>
+
+      <h1 class="login-title">Create your account</h1>
+      <p class="login-subtitle">Start automating your email outreach.</p>
+
+      <form id="signup-form" class="login-form" autocomplete="off" novalidate>
+        <div class="form-group">
+          <label class="form-label" for="full-name">Full Name</label>
+          <input type="text" id="full-name" name="name" class="form-input" autocomplete="name" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="email">Email Address</label>
+          <input type="email" id="email" name="email" class="form-input" autocomplete="email" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="username">Username</label>
+          <input type="text" id="username" name="username" class="form-input" autocomplete="username" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="password">Password</label>
+          <div class="password-wrapper">
+            <input type="password" id="password" name="password" class="form-input" autocomplete="new-password" required />
+            <button type="button" class="password-toggle" data-target="password" tabindex="-1">👁</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="confirm">Confirm Password</label>
+          <div class="password-wrapper">
+            <input type="password" id="confirm" name="confirm_password" class="form-input" autocomplete="new-password" required />
+            <button type="button" class="password-toggle" data-target="confirm" tabindex="-1">👁</button>
+          </div>
+        </div>
+
+        <div class="form-error" id="signup-error" hidden></div>
+
+        <button type="submit" class="btn btn-primary btn-lg" id="signup-btn">
+          <span class="btn-text">Create Account</span>
+          <span class="btn-loader" hidden></span>
+        </button>
+      </form>
+
+      <p style="margin-top:16px; text-align:center;">
+        Already have an account? <a href="/login">Sign in</a>
+      </p>
+    </div>
+  </main>
+
+  <script>
+(function(){
+    const form = document.getElementById('signup-form');
+    const err = document.getElementById('signup-error');
+    const btn = document.getElementById('signup-btn');
+    const btnText = btn.querySelector('.btn-text');
+    const btnLoader = btn.querySelector('.btn-loader');
+
+    function showError(msg){ err.textContent = msg; err.hidden = !msg; }
+    function setLoading(loading){ btn.disabled = loading; btnText.hidden = loading; btnLoader.hidden = !loading; }
+
+    // Email validation regex (matches backend validators.py)
+    const EMAIL_REGEX = /^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+    function validateEmail(email) {
+      if (!email || email.length > 254) return false;
+      return EMAIL_REGEX.test(email);
+    }
+
+    document.querySelectorAll('.password-toggle').forEach(b => b.addEventListener('click', function(){
+      const target = document.getElementById(this.dataset.target);
+      if(target.type === 'password') target.type = 'text'; else target.type = 'password';
+    }));
+
+    form.addEventListener('submit', function(e){
+      e.preventDefault();
+      showError('');
+      const name = document.getElementById('full-name').value.trim();
+      const email = document.getElementById('email').value.trim().toLowerCase();
+      const username = document.getElementById('username').value.trim().toLowerCase();
+      const password = document.getElementById('password').value;
+      const confirm = document.getElementById('confirm').value;
+
+      if(!name || !email || !username || !password || !confirm){ showError('Please fill in all fields.'); return; }
+      if(!validateEmail(email)){ showError('Please enter a valid email address.'); return; }
+      if(password !== confirm){ showError('Passwords do not match.'); return; }
+      if(password.length < 8){ showError('Password must be at least 8 characters.'); return; }
+
+      setLoading(true);
+      fetch('/api/auth/register', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, username, password, confirm_password: confirm })
+      }).then(r => {
+        if(r.ok){ window.location.replace('/'); return; }
+        return r.json().catch(()=>({})).then(d=>{ showError(d.detail || 'Signup failed'); });
+      }).catch(()=> showError('Network error'))
+      .finally(()=> setLoading(false));
+    });
+  })();
+  </script>
+</body>
+</html>

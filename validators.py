@@ -4,8 +4,15 @@ Email address validation utilities.
 """
 import re
 
+# RFC 5322 compliant regex (simplified for practical use)
+# Local part: alphanumeric + special chars, dots not at start/end/consecutive
+# Domain: labels separated by dots, each label alphanumeric + hyphen (not start/end)
 EMAIL_REGEX = re.compile(
-    r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$"
+    r"^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+"
+    r"(?:\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+    r"@"
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"
+    r"[a-zA-Z]{2,}$"
 )
 
 

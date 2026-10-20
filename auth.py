@@ -30,6 +30,8 @@ from fastapi import Request, HTTPException, status, Depends
 from fastapi.responses import JSONResponse
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
+from validators import is_valid_email, clean_email
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -81,12 +83,12 @@ _legacy_migrated = False
 _legacy_migration_lock = threading.Lock()
 
 
-def _get_db():
+def _get_db(d1_binding=None):
     from database import Database
-    return Database()
+    return Database(d1_binding=d1_binding)
 
 
-def _migrate_legacy_user():
+def _migrate_legacy_user(d1_binding=None):
     global _legacy_migrated
     if _legacy_migrated:
         return
@@ -95,7 +97,7 @@ def _migrate_legacy_user():
         if _legacy_migrated:
             return
 
-        db = _get_db()
+        db = _get_db(d1_binding=d1_binding)
         if db.user_exists():
             _legacy_migrated = True
             return
@@ -108,9 +110,9 @@ def _migrate_legacy_user():
             _legacy_migrated = True
 
 
-def _ensure_db_initialized():
+def _ensure_db_initialized(d1_binding=None):
     try:
-        _migrate_legacy_user()
+        _migrate_legacy_user(d1_binding=d1_binding)
     except Exception:
         pass
 
@@ -290,7 +292,11 @@ def is_auth_disabled() -> bool:
 # ---------------------------------------------------------------------------
 def attempt_login(username: str, password: str, ip: str, db=None) -> tuple[bool, str, Optional[tuple[int, str]]]:
     """Returns (success, message, session_data). Enforces rate limiting."""
-    _ensure_db_initialized()
+    if db is not None and hasattr(db, '_is_d1') and db._is_d1:
+        d1_binding = getattr(db._backend, '_d1', None) if hasattr(db, '_backend') else None
+    else:
+        d1_binding = None
+    _ensure_db_initialized(d1_binding=d1_binding)
 
     limited, reason = _rate_limiter.is_limited(ip, username or "")
     if limited:
@@ -301,7 +307,7 @@ def attempt_login(username: str, password: str, ip: str, db=None) -> tuple[bool,
         return False, "Username and password are required", None
 
     if db is None:
-        db = _get_db()
+        db = _get_db(d1_binding=d1_binding)
     user = db.get_user_by_username(username)
 
     if not user:
@@ -394,9 +400,13 @@ def validate_password(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-def attempt_register(username: str, password: str, confirm_password: str, ip: str, db=None) -> tuple[bool, str, Optional[tuple[int, str]]]:
+def attempt_register(username: str, password: str, confirm_password: str, ip: str, db=None, email: str = None, name: str = None) -> tuple[bool, str, Optional[tuple[int, str]]]:
     """Returns (success, message, session_data). Enforces registration rate limiting."""
-    _ensure_db_initialized()
+    if db is not None and hasattr(db, '_is_d1') and db._is_d1:
+        d1_binding = getattr(db._backend, '_d1', None) if hasattr(db, '_backend') else None
+    else:
+        d1_binding = None
+    _ensure_db_initialized(d1_binding=d1_binding)
 
     limited, reason = _registration_limiter.is_limited(ip)
     if limited:
@@ -413,16 +423,31 @@ def attempt_register(username: str, password: str, confirm_password: str, ip: st
     if password != confirm_password:
         return False, "Passwords do not match.", None
 
+    # Validate email if provided
+    if email is not None:
+        email = clean_email(email)
+        if not email:
+            return False, "Please enter an email address.", None
+        if not is_valid_email(email):
+            return False, "Please enter a valid email address.", None
+
+        # Check for duplicate email
+        if db is None:
+            db = _get_db(d1_binding=d1_binding)
+        existing_email = db._backend.execute("SELECT 1 FROM users WHERE email = ?", (email,))
+        if existing_email:
+            return False, "An account with this email already exists.", None
+
     _registration_limiter.record_registration(ip)
 
     if db is None:
-        db = _get_db()
+        db = _get_db(d1_binding=d1_binding)
 
     existing = db.get_user_by_username(username.strip())
     if existing:
         return False, "That username is already in use.", None
 
     password_hash = hash_password(password)
-    user_id = db.create_user(username.strip(), password_hash)
+    user_id = db.create_user(username.strip(), password_hash, email=email, name=name.strip() if name else None)
 
     return True, "ok", (user_id, username.strip())

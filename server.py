@@ -539,6 +539,8 @@ class LoginRequest(BaseModel):
     password: str
 
 class RegisterRequest(BaseModel):
+    name: str
+    email: str
     username: str
     password: str
     confirm_password: str
@@ -572,7 +574,7 @@ async def register(payload: RegisterRequest, request: Request):
     ip = client_ip(request)
 
     success, message, session_data = attempt_register(
-        payload.username, payload.password, payload.confirm_password, ip, db
+        payload.username, payload.password, payload.confirm_password, ip, db, payload.email, payload.name
     )
     if not success:
         status_code = 429 if "Too many" in message else 400
@@ -1104,6 +1106,16 @@ async def serve_login():
 @app.get("/")
 async def serve_index():
     return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.get("/signup")
+async def serve_signup():
+    # Serve the signup page if it exists in the frontend directory
+    p = FRONTEND_DIR / "signup.html"
+    if p.exists():
+        return FileResponse(p)
+    # Fallback to 404 to avoid leaking implementation details
+    raise HTTPException(status_code=404, detail="Not Found")
 
 @app.get("/static/{file_path:path}")
 async def serve_static(file_path: str):

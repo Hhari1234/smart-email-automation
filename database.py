@@ -150,6 +150,29 @@ class SQLiteBackend:
         except Exception:
             pass
 
+        # Ensure users table has optional columns for modern auth (email, name)
+        try:
+            cursor = self._conn.execute("PRAGMA table_info(users)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'email' not in columns:
+                try:
+                    self._conn.execute("ALTER TABLE users ADD COLUMN email TEXT NULL")
+                except Exception:
+                    pass
+            if 'name' not in columns:
+                try:
+                    self._conn.execute("ALTER TABLE users ADD COLUMN name TEXT NULL")
+                except Exception:
+                    pass
+            # non-unique index on email for faster lookups (cannot add unique constraint safely here)
+            try:
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+            except Exception:
+                pass
+            self._conn.commit()
+        except Exception:
+            pass
+
     def execute(self, query: str, params: tuple = ()) -> list:
         """Execute a query and return results as list of rows.
 
@@ -575,36 +598,52 @@ class Database:
     # -------------------------------------------------------------------------
     # Users
     # -------------------------------------------------------------------------
-    def create_user(self, username: str, password_hash: str) -> int:
+    def create_user(self, username: str, password_hash: str, email: str = None, name: str = None) -> int:
+        """
+        Create a new user. Backwards-compatible: email and name are optional.
+        """
         now = datetime.now().isoformat(timespec="seconds")
-        rows = self._backend.execute(
-            "INSERT INTO users (username, password_hash, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?)",
-            (username, password_hash, now, now, 1)
-        )
+        # Attempt to insert with email and name if available
+        if email is not None or name is not None:
+            rows = self._backend.execute(
+                "INSERT INTO users (username, password_hash, email, name, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (username, password_hash, email, name, now, now, 1)
+            )
+        else:
+            rows = self._backend.execute(
+                "INSERT INTO users (username, password_hash, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?)",
+                (username, password_hash, now, now, 1)
+            )
         if self._is_d1:
             result = self._backend.execute("SELECT last_insert_rowid()")
             return list(result[0])[0] if result else 0
         return rows[0] if rows else 0
 
     def get_user_by_username(self, username: str):
+        # Attempt to select email and name if present in schema
         rows = self._backend.execute(
-            "SELECT id, username, password_hash, created_at, updated_at, is_active, last_login_at FROM users WHERE username = ?",
+            "SELECT id, username, password_hash, created_at, updated_at, is_active, last_login_at, email, name FROM users WHERE username = ?",
             (username,)
         )
         if not rows:
             return None
-        cols = ["id", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
-        return dict(zip(cols, rows[0]))
+        # Normalize returned tuple into dict with safe keys
+        row = rows[0]
+        cols = ["id", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at", "email", "name"]
+        d = dict(zip(cols[:len(row)], row))
+        return d
 
     def get_user_by_id(self, user_id: int):
         rows = self._backend.execute(
-            "SELECT id, username, password_hash, created_at, updated_at, is_active, last_login_at FROM users WHERE id = ?",
+            "SELECT id, username, password_hash, created_at, updated_at, is_active, last_login_at, email, name FROM users WHERE id = ?",
             (user_id,)
         )
         if not rows:
             return None
-        cols = ["id", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at"]
-        return dict(zip(cols, rows[0]))
+        row = rows[0]
+        cols = ["id", "username", "password_hash", "created_at", "updated_at", "is_active", "last_login_at", "email", "name"]
+        d = dict(zip(cols[:len(row)], row))
+        return d
 
     def update_last_login(self, user_id: int):
         now = datetime.now().isoformat(timespec="seconds")
