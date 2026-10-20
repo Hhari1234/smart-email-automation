@@ -1131,10 +1131,6 @@ def _frontend_file(file_path: str) -> FileResponse:
 async def serve_login():
     return FileResponse(FRONTEND_DIR / "login.html")
 
-@app.get("/signup")
-async def serve_signup():
-    return FileResponse(FRONTEND_DIR / "login.html")
-
 @app.get("/")
 async def serve_index():
     return FileResponse(FRONTEND_DIR / "index.html")

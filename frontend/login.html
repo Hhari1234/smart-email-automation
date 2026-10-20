@@ -322,7 +322,7 @@
         if (!name) { setFieldError('name', 'Full name is required.'); valid = false; }
         if (!email) {
           setFieldError('email', 'Email address is required.'); valid = false;
-        } else if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+        } else if (!/^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(email)) {
           setFieldError('email', 'Please enter a valid email address.'); valid = false;
         }
         if (!username) {
